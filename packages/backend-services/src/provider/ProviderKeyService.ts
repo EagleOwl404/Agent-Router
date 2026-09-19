@@ -61,13 +61,20 @@ class ProviderKeyService {
     if (!provider || provider.userEmail.toLowerCase() !== userEmail.toLowerCase()) throw new NotFoundError('Provider not found');
   }
 
+  private async requireStaticKeyTarget(providerId: string, userEmail: string): Promise<void> {
+    const dao = await this.deps.providerDAO();
+    const provider = await dao.getById(providerId);
+    if (!provider || provider.userEmail.toLowerCase() !== userEmail.toLowerCase()) throw new NotFoundError('Provider not found');
+    if (provider.kind === 'OPENAI_CODEX') throw new BadRequestError('OPENAI_CODEX providers use Codex OAuth keys; connect via the Codex authorize flow');
+  }
+
   public async addKey(
     providerId: string,
     userEmail: string,
     input: { name?: unknown; secret?: unknown; tokenLimit?: unknown; requestLimit?: unknown; resetInDays?: unknown; priority?: unknown },
   ): Promise<ProviderKeyMetadata> {
     const normalized = userEmail.toLowerCase();
-    await this.requireOwnedProvider(providerId, normalized);
+    await this.requireStaticKeyTarget(providerId, normalized);
     const name = typeof input.name === 'string' ? input.name.trim() : '';
     if (!name) throw new BadRequestError('name is required');
     if (name.length > 80) throw new BadRequestError('name must be at most 80 characters');
@@ -159,6 +166,7 @@ class ProviderKeyService {
     const dao = await this.deps.providerKeyDAO();
     const current = await dao.getById(keyId);
     if (!current || current.provider_id !== providerId) throw new NotFoundError('Provider key not found');
+    if ((current.auth_type ?? 'static') !== 'static') throw new BadRequestError('OAuth keys cannot rotate static secrets; reconnect via OAuth');
     const masterKey = await this.deps.masterKey();
     const now = TimestampUtil.getCurrentUnixTimestampInSeconds();
     // Direct SQL via updateMeta path is insufficient for the secret; update encrypted_key + hint + clear failures.

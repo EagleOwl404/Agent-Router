@@ -7,6 +7,7 @@ import { scopeMiddleware } from '@/middleware/scopeMiddleware';
 import { SPA_HTML } from '@/generated/spa-shell';
 import { registerGatewayKeyRoutes } from './routes/GatewayKeyRoutes';
 import { registerProviderRoutes } from './routes/ProviderRoutes';
+import { registerCodexOAuthRoutes } from './routes/CodexOAuthRoutes';
 import { registerProxyRoutes } from './routes/ProxyRoutes';
 import { registerUsageRoutes } from './routes/UsageRoutes';
 import { registerUserRoutes } from './routes/UserRoutes';
@@ -44,6 +45,10 @@ class AgentRouterWorker extends AbstractEntrypointWorker {
     app.use('/gemini/*', rateLimit({ windowMs: 60_000, max: 300, keyPrefix: 'proxy-gemini' }));
 
     registerProxyRoutes(app);
+
+    // Public Codex OAuth callback (per-key redirect URI); authorize/disconnect live under /user/*.
+    app.use('/api/codex/*', rateLimit({ windowMs: 60_000, max: 30, keyPrefix: 'codex' }));
+    registerCodexOAuthRoutes(app);
 
     app.use('/user/*', MiddlewareHandlers.userAuthentication());
     app.use('/user/gateway-keys*', rateLimit({ windowMs: 60_000, max: 30, keyPrefix: 'gateway-keys' }));

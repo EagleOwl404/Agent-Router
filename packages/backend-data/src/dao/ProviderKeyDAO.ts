@@ -1,6 +1,6 @@
 import { BaseDAO } from './BaseDAO';
 import type { D1Queryable } from '../utils/D1Types';
-import type { ProviderKeyMetadata, ProviderKeyStatus } from '@agent-router/shared';
+import type { CodexOAuthStatus, ProviderKeyAuthType, ProviderKeyMetadata, ProviderKeyStatus } from '@agent-router/shared';
 
 export interface ProviderKeyRow {
   id: string;
@@ -22,6 +22,21 @@ export interface ProviderKeyRow {
   last_error: string | null;
   created_at: number;
   updated_at: number | null;
+  auth_type?: string | null;
+  encrypted_access_token?: string | null;
+  encrypted_refresh_token?: string | null;
+  codex_account_id?: string | null;
+  access_expires_at?: number | null;
+  oauth_status?: string | null;
+}
+
+function toAuthType(value: unknown): ProviderKeyAuthType {
+  return value === 'codex_oauth' ? 'codex_oauth' : 'static';
+}
+
+function toOAuthStatus(value: unknown): CodexOAuthStatus | null {
+  const allowed: readonly string[] = ['pending', 'connected', 'expired', 'revoked'];
+  return typeof value === 'string' && allowed.includes(value) ? (value as CodexOAuthStatus) : null;
 }
 
 function toMetadata(row: ProviderKeyRow): ProviderKeyMetadata {
@@ -44,6 +59,10 @@ function toMetadata(row: ProviderKeyRow): ProviderKeyMetadata {
     lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    authType: toAuthType(row.auth_type),
+    oauthStatus: toOAuthStatus(row.oauth_status),
+    codexAccountId: row.codex_account_id ?? null,
+    accessExpiresAt: row.access_expires_at ?? null,
   };
 }
 
@@ -131,14 +150,23 @@ class ProviderKeyDAO extends BaseDAO {
 
   public async updateMeta(
     id: string,
-    patch: { name?: string; priority?: number; tokenLimit?: number | null; requestLimit?: number | null; status?: ProviderKeyStatus; now: number },
+    patch: {
+      name?: string;
+      priority?: number;
+      tokenLimit?: number | null;
+      requestLimit?: number | null;
+      status?: ProviderKeyStatus;
+      now: number;
+    },
   ): Promise<void> {
     const current = await this.getById(id);
     if (!current) return;
     await this.withRetry(
       () =>
         this.database
-          .prepare('UPDATE provider_keys SET name = ?, priority = ?, token_limit = ?, request_limit = ?, status = ?, updated_at = ? WHERE id = ?')
+          .prepare(
+            'UPDATE provider_keys SET name = ?, priority = ?, token_limit = ?, request_limit = ?, status = ?, updated_at = ? WHERE id = ?',
+          )
           .bind(
             patch.name ?? current.name,
             patch.priority ?? current.priority,
@@ -193,7 +221,9 @@ class ProviderKeyDAO extends BaseDAO {
     await this.withRetry(
       () =>
         this.database
-          .prepare(`UPDATE provider_keys SET cooldown_until = NULL, consecutive_failures = 0, status = 'active', updated_at = ? WHERE id = ?`)
+          .prepare(
+            `UPDATE provider_keys SET cooldown_until = NULL, consecutive_failures = 0, status = 'active', updated_at = ? WHERE id = ?`,
+          )
           .bind(now, id)
           .run(),
       'clear key cooldown',
@@ -204,7 +234,9 @@ class ProviderKeyDAO extends BaseDAO {
     await this.withRetry(
       () =>
         this.database
-          .prepare(`UPDATE provider_keys SET used_tokens = 0, used_requests = 0, reset_at = ?, status = 'active', cooldown_until = NULL, consecutive_failures = 0, updated_at = ? WHERE id = ?`)
+          .prepare(
+            `UPDATE provider_keys SET used_tokens = 0, used_requests = 0, reset_at = ?, status = 'active', cooldown_until = NULL, consecutive_failures = 0, updated_at = ? WHERE id = ?`,
+          )
           .bind(resetAt, now, id)
           .run(),
       'reset key usage',
@@ -245,8 +277,143 @@ class ProviderKeyDAO extends BaseDAO {
     await this.withRetry(() => this.database.prepare('DELETE FROM provider_keys WHERE id = ?').bind(id).run(), 'delete provider key');
   }
 
+  public async createOAuthKey(row: {
+    id: string;
+    providerId: string;
+    userEmail: string;
+    name: string;
+    priority: number;
+    now: number;
+  }): Promise<void> {
+    await this.withRetry(
+      () =>
+        this.database
+          .prepare(
+            `INSERT INTO provider_keys (id, provider_id, user_email, name, encrypted_key, key_hint,
+              token_limit, request_limit, used_tokens, used_requests, reset_at, priority, status,
+              cooldown_until, consecutive_failures, last_used_at, last_error, created_at, updated_at,
+              auth_type, encrypted_access_token, encrypted_refresh_token, codex_account_id, access_expires_at, oauth_status)
+             VALUES (?, ?, ?, ?, '', NULL, NULL, NULL, 0, 0, NULL, ?, 'active', NULL, 0, NULL, NULL, ?, NULL,
+              'codex_oauth', NULL, NULL, NULL, NULL, 'pending')`,
+          )
+          .bind(row.id, row.providerId, row.userEmail.toLowerCase(), row.name, row.priority, row.now)
+          .run(),
+      'create codex oauth key',
+    );
+  }
+
+  public async updateOAuthConnected(
+    id: string,
+    patch: {
+      encryptedAccessToken: string | null;
+      encryptedRefreshToken: string;
+      accountId: string | null;
+      accessExpiresAt: number;
+      now: number;
+    },
+  ): Promise<void> {
+    await this.withRetry(
+      () =>
+        this.database
+          .prepare(
+            `UPDATE provider_keys SET encrypted_access_token = ?, encrypted_refresh_token = ?, codex_account_id = ?, access_expires_at = ?,
+              oauth_status = 'connected', consecutive_failures = 0, cooldown_until = NULL, last_error = NULL, updated_at = ?
+              WHERE id = ? AND auth_type = 'codex_oauth'`,
+          )
+          .bind(patch.encryptedAccessToken, patch.encryptedRefreshToken, patch.accountId, patch.accessExpiresAt, patch.now, id)
+          .run(),
+      'update codex oauth connected',
+    );
+  }
+
+  public async updateOAuthRefreshed(
+    id: string,
+    patch: { encryptedAccessToken: string | null; encryptedRefreshToken: string; accessExpiresAt: number; now: number },
+  ): Promise<void> {
+    await this.withRetry(
+      () =>
+        this.database
+          .prepare(
+            `UPDATE provider_keys SET encrypted_access_token = ?, encrypted_refresh_token = ?, access_expires_at = ?,
+              oauth_status = 'connected', consecutive_failures = 0, cooldown_until = NULL, last_error = NULL, updated_at = ?
+              WHERE id = ? AND auth_type = 'codex_oauth'`,
+          )
+          .bind(patch.encryptedAccessToken, patch.encryptedRefreshToken, patch.accessExpiresAt, patch.now, id)
+          .run(),
+      'update codex oauth refreshed',
+    );
+  }
+
+  public async updateOAuthRefreshedConditional(
+    id: string,
+    expectedEncryptedRefreshToken: string,
+    patch: { encryptedAccessToken: string | null; encryptedRefreshToken: string; accessExpiresAt: number; now: number },
+  ): Promise<boolean> {
+    const result = await this.withRetry(
+      () =>
+        this.database
+          .prepare(
+            `UPDATE provider_keys SET encrypted_access_token = ?, encrypted_refresh_token = ?, access_expires_at = ?,
+              oauth_status = 'connected', consecutive_failures = 0, cooldown_until = NULL, last_error = NULL, updated_at = ?
+              WHERE id = ? AND auth_type = 'codex_oauth' AND encrypted_refresh_token = ?`,
+          )
+          .bind(
+            patch.encryptedAccessToken,
+            patch.encryptedRefreshToken,
+            patch.accessExpiresAt,
+            patch.now,
+            id,
+            expectedEncryptedRefreshToken,
+          )
+          .run(),
+      'update codex oauth refreshed conditional',
+    );
+    return (result.meta?.changes ?? 0) > 0;
+  }
+
+  public async setOAuthStatus(id: string, status: CodexOAuthStatus, error: string | null, now: number): Promise<void> {
+    await this.withRetry(
+      () =>
+        this.database
+          .prepare(`UPDATE provider_keys SET oauth_status = ?, last_error = ?, updated_at = ? WHERE id = ? AND auth_type = 'codex_oauth'`)
+          .bind(status, error, now, id)
+          .run(),
+      'set codex oauth status',
+    );
+  }
+
+  public async clearOAuth(id: string, now: number): Promise<void> {
+    await this.withRetry(
+      () =>
+        this.database
+          .prepare(
+            `UPDATE provider_keys SET encrypted_access_token = NULL, encrypted_refresh_token = NULL, codex_account_id = NULL, access_expires_at = NULL,
+              oauth_status = 'pending', consecutive_failures = 0, cooldown_until = NULL, last_error = NULL, updated_at = ?
+              WHERE id = ? AND auth_type = 'codex_oauth'`,
+          )
+          .bind(now, id)
+          .run(),
+      'clear codex oauth',
+    );
+  }
+
+  public async listOAuthRefreshCandidates(now: number, threshold: number, limit: number): Promise<ProviderKeyRow[]> {
+    const result = await this.database
+      .prepare(
+        `SELECT * FROM provider_keys WHERE auth_type = 'codex_oauth' AND oauth_status = 'connected'
+          AND encrypted_refresh_token IS NOT NULL AND (access_expires_at IS NULL OR access_expires_at <= ?)
+          ORDER BY access_expires_at ASC NULLS FIRST LIMIT ?`,
+      )
+      .bind(threshold, limit)
+      .all<ProviderKeyRow>();
+    return result.results ?? [];
+  }
+
   public async deleteByProvider(providerId: string): Promise<void> {
-    await this.withRetry(() => this.database.prepare('DELETE FROM provider_keys WHERE provider_id = ?').bind(providerId).run(), 'delete provider keys');
+    await this.withRetry(
+      () => this.database.prepare('DELETE FROM provider_keys WHERE provider_id = ?').bind(providerId).run(),
+      'delete provider keys',
+    );
   }
 }
 

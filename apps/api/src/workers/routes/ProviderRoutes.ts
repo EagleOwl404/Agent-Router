@@ -95,7 +95,13 @@ function registerProviderRoutes(app: ProviderApp): void {
 
   app.patch('/user/providers/:id/keys/:keyId', async (c) => {
     const email = c.get('AuthenticatedUserEmailAddress');
-    const body = (await c.req.json().catch(() => ({}))) as { name?: unknown; priority?: unknown; tokenLimit?: unknown; requestLimit?: unknown; status?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as {
+      name?: unknown;
+      priority?: unknown;
+      tokenLimit?: unknown;
+      requestLimit?: unknown;
+      status?: unknown;
+    };
     try {
       const svc = createRequestScope(c.env).get(Tokens.ProviderKeyService);
       return c.json(await svc.updateKey(c.req.param('id'), c.req.param('keyId'), email, body));
@@ -132,6 +138,41 @@ function registerProviderRoutes(app: ProviderApp): void {
       const svc = createRequestScope(c.env).get(Tokens.ProviderKeyService);
       await svc.deleteKey(c.req.param('id'), c.req.param('keyId'), email);
       return c.json({ ok: true });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Failed' }, statusOf(error));
+    }
+  });
+
+  // Codex OAuth keys (OPENAI_CODEX providers): create pending key, authorize via browser PKCE, disconnect.
+  app.post('/user/providers/:id/keys/codex', async (c) => {
+    const email = c.get('AuthenticatedUserEmailAddress');
+    const body = (await c.req.json().catch(() => ({}))) as { name?: unknown; priority?: unknown };
+    try {
+      const svc = createRequestScope(c.env).get(Tokens.CodexOAuthService);
+      const created = await svc.createAuthorizationKey(c.req.param('id'), email, body);
+      return c.json(created, 201);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Failed' }, statusOf(error));
+    }
+  });
+
+  app.post('/user/providers/:id/keys/:keyId/codex/authorize', async (c) => {
+    const email = c.get('AuthenticatedUserEmailAddress');
+    try {
+      const origin = new URL(c.req.url).origin;
+      const redirectUri = `${origin}/api/codex/callback/${c.req.param('keyId')}`;
+      const svc = createRequestScope(c.env).get(Tokens.CodexOAuthService);
+      return c.json(await svc.createAuthorization(c.req.param('id'), c.req.param('keyId'), email, redirectUri));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Failed' }, statusOf(error));
+    }
+  });
+
+  app.post('/user/providers/:id/keys/:keyId/codex/disconnect', async (c) => {
+    const email = c.get('AuthenticatedUserEmailAddress');
+    try {
+      const svc = createRequestScope(c.env).get(Tokens.CodexOAuthService);
+      return c.json(await svc.disconnect(c.req.param('id'), c.req.param('keyId'), email));
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : 'Failed' }, statusOf(error));
     }

@@ -6,7 +6,14 @@ interface UpstreamCall {
   body: string;
 }
 
-function buildUpstreamCall(kind: ProviderKind, baseUrl: string | null, path: string, secret: string, body: unknown, anthropicVersion = '2023-06-01'): UpstreamCall {
+function buildUpstreamCall(
+  kind: ProviderKind,
+  baseUrl: string | null,
+  path: string,
+  secret: string,
+  body: unknown,
+  anthropicVersion = '2023-06-01',
+): UpstreamCall {
   const payload = JSON.stringify(body ?? {});
   if (kind === 'ANTHROPIC') {
     const base = (baseUrl ?? 'https://api.anthropic.com').replace(/\/$/, '');
@@ -29,6 +36,18 @@ function buildUpstreamCall(kind: ProviderKind, baseUrl: string | null, path: str
   return {
     url: `${base}${path.startsWith('/') ? path : `/${path}`}`,
     headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+    body: payload,
+  };
+}
+
+function buildCodexCall(baseUrl: string | null, path: string, accessToken: string, accountId: string | null, body: unknown): UpstreamCall {
+  const payload = JSON.stringify(body ?? {});
+  const base = (baseUrl ?? 'https://api.openai.com/v1').replace(/\/$/, '');
+  const headers: Record<string, string> = { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` };
+  if (accountId) headers['ChatGPT-Account-Id'] = accountId;
+  return {
+    url: `${base}${path.startsWith('/') ? path : `/${path}`}`,
+    headers,
     body: payload,
   };
 }
@@ -67,5 +86,5 @@ function isRetryableStatus(status: number): boolean {
   return RETRYABLE_STATUSES.has(status);
 }
 
-export { buildUpstreamCall, parseUsage, isRetryableStatus };
+export { buildUpstreamCall, buildCodexCall, parseUsage, isRetryableStatus };
 export type { UpstreamCall, ParsedUsage };

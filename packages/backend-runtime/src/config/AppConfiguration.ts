@@ -387,6 +387,18 @@ class AppConfiguration {
   public getUsageRetentionDays(): number {
     return this.router.getUsageRetentionDays();
   }
+
+  public getCodexOAuthStateExpiryMinutes(): number {
+    return this.router.getCodexOAuthStateExpiryMinutes();
+  }
+
+  public getCodexAccessMinValidSeconds(): number {
+    return this.router.getCodexAccessMinValidSeconds();
+  }
+
+  public getCodexRefreshBatchSize(): number {
+    return this.router.getCodexRefreshBatchSize();
+  }
 }
 
 export { AppConfiguration };

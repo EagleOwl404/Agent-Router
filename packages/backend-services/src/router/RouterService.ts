@@ -6,7 +6,8 @@ import type { ProviderKind } from '@agent-router/shared';
 import { TimestampUtil, UUIDUtil } from '@agent-router/shared/utils';
 import { AppConfiguration } from '@agent-router/backend-runtime/config';
 import { KeyCrypto } from '../provider/KeyCrypto';
-import { buildUpstreamCall, isRetryableStatus, parseUsage } from './UpstreamClient';
+import { buildCodexCall, buildUpstreamCall, isRetryableStatus, parseUsage } from './UpstreamClient';
+import type { UpstreamCall } from './UpstreamClient';
 
 interface RouterServiceEnv {
   DB: D1Queryable;
@@ -25,6 +26,18 @@ interface RouterServiceDeps {
   masterKey?: () => Promise<string>;
   config?: AppConfiguration;
   fetchImpl?: typeof fetch;
+  codexTokens?: CodexAccessResolver;
+}
+
+// Minimal structural surface of CodexTokenService so the router stays
+// decoupled (type-only; the concrete service is wired in requestScope).
+interface CodexAccessResolver {
+  getAccessToken(
+    providerId: string,
+    keyId: string,
+    userEmail: string,
+    opts?: { forceRefresh?: boolean },
+  ): Promise<{ accessToken: string; accountId: string | null }>;
 }
 
 interface ProxyRequest {
@@ -55,7 +68,7 @@ function cooldownForFailures(baseMs: number, failures: number): number {
 }
 
 class RouterService {
-  private readonly deps: Required<RouterServiceDeps>;
+  private readonly deps: Required<Omit<RouterServiceDeps, 'codexTokens'>> & Pick<RouterServiceDeps, 'codexTokens'>;
 
   constructor(
     private readonly env: RouterServiceEnv,
@@ -75,6 +88,7 @@ class RouterService {
       masterKey,
       config,
       fetchImpl: deps.fetchImpl ?? fetch,
+      codexTokens: deps.codexTokens,
       ...deps,
     };
   }
@@ -83,6 +97,40 @@ class RouterService {
     if (row.token_limit !== null && row.used_tokens >= row.token_limit) return true;
     if (row.request_limit !== null && row.used_requests >= row.request_limit) return true;
     return false;
+  }
+
+  private isOAuthKey(row: ProviderKeyRow): boolean {
+    return (row.auth_type ?? 'static') === 'codex_oauth';
+  }
+
+  private isOAuthUsable(row: ProviderKeyRow): boolean {
+    return this.isOAuthKey(row) && row.oauth_status === 'connected' && row.encrypted_refresh_token != null;
+  }
+
+  private async buildCallForCandidate(
+    candidate: ProviderKeyRow,
+    req: ProxyRequest,
+    masterKey: string,
+    forceRefresh = false,
+  ): Promise<UpstreamCall> {
+    if (this.isOAuthKey(candidate)) {
+      const resolver = this.deps.codexTokens;
+      if (!resolver) throw new BadRequestError('Codex OAuth is not configured for this request');
+      const tokens = await resolver.getAccessToken(req.providerId, candidate.id, req.userEmail, forceRefresh ? { forceRefresh: true } : {});
+      return buildCodexCall(req.providerBaseUrl, req.upstreamPath, tokens.accessToken, tokens.accountId, req.upstreamBody);
+    }
+    const secret = await KeyCrypto.decrypt(candidate.encrypted_key, masterKey);
+    return buildUpstreamCall(req.providerKind, req.providerBaseUrl, req.upstreamPath, secret, req.upstreamBody);
+  }
+
+  private async fetchWithTimeout(call: UpstreamCall, timeoutMs: number): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await this.deps.fetchImpl(call.url, { method: 'POST', headers: call.headers, body: call.body, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   public async proxy(req: ProxyRequest): Promise<ProxySuccess> {
@@ -101,13 +149,19 @@ class RouterService {
     const keyDAO = await this.deps.providerKeyDAO();
     const now = TimestampUtil.getCurrentUnixTimestampInSeconds();
     const candidates = await keyDAO.listActiveByProvider(req.providerId, now);
-    const usable = candidates.filter((k) => !this.isCapExceeded(k));
+    const usable = candidates.filter((k) => !this.isCapExceeded(k) && (!this.isOAuthKey(k) || this.isOAuthUsable(k)));
     const capped = candidates.filter((k) => this.isCapExceeded(k));
+    const oauthBlocked = candidates.filter((k) => !this.isCapExceeded(k) && this.isOAuthKey(k) && !this.isOAuthUsable(k));
     // Mark newly-capped keys exhausted best-effort (does not block the request).
     for (const key of capped) {
       await keyDAO.markExhausted(key.id, now).catch(() => undefined);
     }
-    if (usable.length === 0) throw new ExceededLimitError('All provider keys are exhausted or cooling. Try again later.');
+    if (usable.length === 0) {
+      if (oauthBlocked.length > 0 && capped.length === 0) {
+        throw new BadRequestError('Codex OAuth keys require reconnection. Complete OAuth authorization for the key and retry.');
+      }
+      throw new ExceededLimitError('All provider keys are exhausted or cooling. Try again later.');
+    }
 
     const masterKey = await this.deps.masterKey();
     const usageDAO = await this.deps.usageDAO();
@@ -118,15 +172,26 @@ class RouterService {
       const candidate = usable[i];
       const startedMs = Date.now();
       try {
-        const secret = await KeyCrypto.decrypt(candidate.encrypted_key, masterKey);
-        const call = buildUpstreamCall(req.providerKind, req.providerBaseUrl, req.upstreamPath, secret, req.upstreamBody);
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
-        let upstream: Response;
-        try {
-          upstream = await this.deps.fetchImpl(call.url, { method: 'POST', headers: call.headers, body: call.body, signal: controller.signal });
-        } finally {
-          clearTimeout(timer);
+        let call = await this.buildCallForCandidate(candidate, req, masterKey);
+        let upstream = await this.fetchWithTimeout(call, timeoutMs);
+        // OAuth access tokens can be revoked server-side before JWT expiry:
+        // force one refresh-and-retry before treating the 401 as a key failure.
+        if (upstream.status === 401 && this.isOAuthKey(candidate)) {
+          try {
+            call = await this.buildCallForCandidate(candidate, req, masterKey, true);
+            upstream = await this.fetchWithTimeout(call, timeoutMs);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'Upstream request failed';
+            lastError = message.slice(0, 300);
+            lastStatus = 401;
+            const failures = candidate.consecutive_failures + 1;
+            const cooldownUntil =
+              TimestampUtil.getCurrentUnixTimestampInSeconds() + Math.ceil(cooldownForFailures(cooldownBase, failures) / 1000);
+            await keyDAO
+              .recordFailure(candidate.id, message.slice(0, 500), cooldownUntil, TimestampUtil.getCurrentUnixTimestampInSeconds())
+              .catch(() => undefined);
+            continue;
+          }
         }
         const bodyText = await upstream.text();
         const latencyMs = Date.now() - startedMs;
@@ -137,7 +202,9 @@ class RouterService {
           } catch {
             usage = { promptTokens: 0, completionTokens: 0, estimated: true };
           }
-          await keyDAO.recordSuccess(candidate.id, usage.promptTokens, usage.completionTokens, TimestampUtil.getCurrentUnixTimestampInSeconds()).catch(() => undefined);
+          await keyDAO
+            .recordSuccess(candidate.id, usage.promptTokens, usage.completionTokens, TimestampUtil.getCurrentUnixTimestampInSeconds())
+            .catch(() => undefined);
           // Exhaustion check after increment (best-effort status flip).
           const refreshed = await keyDAO.getById(candidate.id).catch(() => null);
           if (refreshed && this.isCapExceeded(refreshed)) {
@@ -160,16 +227,30 @@ class RouterService {
               now: TimestampUtil.getCurrentUnixTimestampInSeconds(),
             })
             .catch(() => undefined);
-          return { status: upstream.status, bodyText, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, estimated: usage.estimated, providerKeyId: candidate.id, attempts: i + 1 };
+          return {
+            status: upstream.status,
+            bodyText,
+            promptTokens: usage.promptTokens,
+            completionTokens: usage.completionTokens,
+            estimated: usage.estimated,
+            providerKeyId: candidate.id,
+            attempts: i + 1,
+          };
         }
         lastStatus = upstream.status;
         lastError = bodyText.slice(0, 300) || `Upstream error ${upstream.status}`;
         if (isRetryableStatus(upstream.status)) {
           const failures = candidate.consecutive_failures + 1;
-          const cooldownUntil = failures >= disableAfter ? null : TimestampUtil.getCurrentUnixTimestampInSeconds() + Math.ceil(cooldownForFailures(cooldownBase, failures) / 1000);
-          await keyDAO.recordFailure(candidate.id, `Upstream ${upstream.status}`, cooldownUntil, TimestampUtil.getCurrentUnixTimestampInSeconds()).catch(() => undefined);
+          const cooldownUntil =
+            failures >= disableAfter
+              ? null
+              : TimestampUtil.getCurrentUnixTimestampInSeconds() + Math.ceil(cooldownForFailures(cooldownBase, failures) / 1000);
+          await keyDAO
+            .recordFailure(candidate.id, `Upstream ${upstream.status}`, cooldownUntil, TimestampUtil.getCurrentUnixTimestampInSeconds())
+            .catch(() => undefined);
           if (failures >= disableAfter) {
-            const db = (keyDAO as unknown as { database: { prepare(q: string): { bind(...v: unknown[]): { run(): Promise<unknown> } } } }).database;
+            const db = (keyDAO as unknown as { database: { prepare(q: string): { bind(...v: unknown[]): { run(): Promise<unknown> } } } })
+              .database;
             await db
               .prepare(`UPDATE provider_keys SET status = 'disabled', updated_at = ? WHERE id = ?`)
               .bind(TimestampUtil.getCurrentUnixTimestampInSeconds(), candidate.id)
@@ -222,8 +303,11 @@ class RouterService {
         lastError = message.slice(0, 300);
         lastStatus = 502;
         const failures = candidate.consecutive_failures + 1;
-        const cooldownUntil = TimestampUtil.getCurrentUnixTimestampInSeconds() + Math.ceil(cooldownForFailures(cooldownBase, failures) / 1000);
-        await keyDAO.recordFailure(candidate.id, message.slice(0, 500), cooldownUntil, TimestampUtil.getCurrentUnixTimestampInSeconds()).catch(() => undefined);
+        const cooldownUntil =
+          TimestampUtil.getCurrentUnixTimestampInSeconds() + Math.ceil(cooldownForFailures(cooldownBase, failures) / 1000);
+        await keyDAO
+          .recordFailure(candidate.id, message.slice(0, 500), cooldownUntil, TimestampUtil.getCurrentUnixTimestampInSeconds())
+          .catch(() => undefined);
       }
     }
     if (lastStatus === 429) throw new ExceededLimitError('All provider keys are rate limited. Try again later.');
@@ -232,4 +316,4 @@ class RouterService {
 }
 
 export { RouterService };
-export type { RouterServiceDeps, RouterServiceEnv, ProxyRequest, ProxySuccess };
+export type { RouterServiceDeps, RouterServiceEnv, ProxyRequest, ProxySuccess, CodexAccessResolver };

@@ -14,6 +14,8 @@
     "./gateway/*": "./src/gateway/*.ts",
     "./provider": "./src/provider/index.ts",
     "./provider/*": "./src/provider/*.ts",
+    "./codex": "./src/codex/index.ts",
+    "./codex/*": "./src/codex/*.ts",
     "./router": "./src/router/index.ts",
     "./router/*": "./src/router/*.ts",
     "./usage": "./src/usage/index.ts",

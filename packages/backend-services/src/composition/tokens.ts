@@ -1,4 +1,5 @@
 import type {
+  CodexOAuthSessionDAO,
   GatewayKeyDAO,
   ProviderDAO,
   ProviderKeyDAO,
@@ -9,6 +10,8 @@ import type { D1Queryable } from '@agent-router/backend-data/utils';
 import type { Token } from '@agent-router/backend-runtime/di';
 import type { AppConfiguration } from '@agent-router/backend-runtime/config';
 import type { AccessAuthService } from '../auth/AccessAuthService';
+import type { CodexOAuthService } from '../codex/CodexOAuthService';
+import type { CodexTokenService } from '../codex/CodexTokenService';
 import type { GatewayKeyService } from '../gateway/GatewayKeyService';
 import type { ProviderService } from '../provider/ProviderService';
 import type { ProviderKeyService } from '../provider/ProviderKeyService';
@@ -34,8 +37,11 @@ const Tokens = {
   GatewayKeyDAO: Symbol('GatewayKeyDAO') as Token<() => Promise<GatewayKeyDAO>>,
   ProviderDAO: Symbol('ProviderDAO') as Token<() => Promise<ProviderDAO>>,
   ProviderKeyDAO: Symbol('ProviderKeyDAO') as Token<() => Promise<ProviderKeyDAO>>,
+  CodexOAuthSessionDAO: Symbol('CodexOAuthSessionDAO') as Token<() => Promise<CodexOAuthSessionDAO>>,
   UsageLedgerDAO: Symbol('UsageLedgerDAO') as Token<() => Promise<UsageLedgerDAO>>,
   AccessAuthService: Symbol('AccessAuthService') as Token<AccessAuthService>,
+  CodexOAuthService: Symbol('CodexOAuthService') as Token<CodexOAuthService>,
+  CodexTokenService: Symbol('CodexTokenService') as Token<CodexTokenService>,
   GatewayKeyService: Symbol('GatewayKeyService') as Token<GatewayKeyService>,
   ProviderService: Symbol('ProviderService') as Token<ProviderService>,
   ProviderKeyService: Symbol('ProviderKeyService') as Token<ProviderKeyService>,

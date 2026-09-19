@@ -116,6 +116,9 @@ class ConfigurationManager {
     getKeyCooldownBaseMs: (env: unknown): number => AppConfiguration.fromEnv(env).getKeyCooldownBaseMs(),
     getKeyMaxConsecutiveFailures: (env: unknown): number => AppConfiguration.fromEnv(env).getKeyMaxConsecutiveFailures(),
     getUsageRetentionDays: (env: unknown): number => AppConfiguration.fromEnv(env).getUsageRetentionDays(),
+    getCodexOAuthStateExpiryMinutes: (env: unknown): number => AppConfiguration.fromEnv(env).getCodexOAuthStateExpiryMinutes(),
+    getCodexAccessMinValidSeconds: (env: unknown): number => AppConfiguration.fromEnv(env).getCodexAccessMinValidSeconds(),
+    getCodexRefreshBatchSize: (env: unknown): number => AppConfiguration.fromEnv(env).getCodexRefreshBatchSize(),
   };
 }
 

@@ -4,6 +4,8 @@ export { ProviderDAO } from './ProviderDAO';
 export type { ProviderRow } from './ProviderDAO';
 export { ProviderKeyDAO } from './ProviderKeyDAO';
 export type { ProviderKeyRow } from './ProviderKeyDAO';
+export { CodexOAuthSessionDAO } from './CodexOAuthSessionDAO';
+export type { CodexOAuthSession, CodexOAuthSessionRow } from './CodexOAuthSessionDAO';
 export { GatewayKeyDAO } from './GatewayKeyDAO';
 export type { GatewayKeyRow } from './GatewayKeyDAO';
 export { UsageLedgerDAO } from './UsageLedgerDAO';

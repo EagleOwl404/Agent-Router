@@ -4,7 +4,11 @@ export interface CurrentUser {
   preferredLanguage?: string | null;
 }
 
-export type ProviderKind = 'OPENAI' | 'ANTHROPIC' | 'GEMINI' | 'OPENAI_COMPAT';
+export type ProviderKind = 'OPENAI' | 'ANTHROPIC' | 'GEMINI' | 'OPENAI_COMPAT' | 'OPENAI_CODEX';
+
+export type ProviderKeyAuthType = 'static' | 'codex_oauth';
+
+export type CodexOAuthStatus = 'pending' | 'connected' | 'expired' | 'revoked';
 
 export interface Provider {
   id: string;
@@ -36,6 +40,10 @@ export interface ProviderKey {
   lastError: string | null;
   createdAt: number;
   updatedAt: number | null;
+  authType: ProviderKeyAuthType;
+  oauthStatus: CodexOAuthStatus | null;
+  codexAccountId: string | null;
+  accessExpiresAt: number | null;
 }
 
 export interface GatewayKey {

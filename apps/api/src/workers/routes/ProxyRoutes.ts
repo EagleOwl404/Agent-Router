@@ -41,8 +41,13 @@ async function resolveProviderId(
   }
   if (opts.kind) {
     const found = providers.find((p) => p.kind === opts.kind);
-    if (!found) throw new NotFoundError(`No active ${opts.kind} provider. Add one under /user/providers.`);
-    return { id: found.id, kind: found.kind, baseUrl: found.baseUrl };
+    if (found) return { id: found.id, kind: found.kind, baseUrl: found.baseUrl };
+    // Chat-model requests fall back to Codex OAuth when no static OpenAI provider exists.
+    if (opts.kind === 'OPENAI') {
+      const codex = providers.find((p) => p.kind === 'OPENAI_CODEX');
+      if (codex) return { id: codex.id, kind: codex.kind, baseUrl: codex.baseUrl };
+    }
+    throw new NotFoundError(`No active ${opts.kind} provider. Add one under /user/providers.`);
   }
   const fallback = providers[0];
   if (!fallback) throw new NotFoundError('No providers configured. Add one under /user/providers.');
@@ -51,7 +56,10 @@ async function resolveProviderId(
 
 function errorResponse(error: unknown): Response {
   if (error instanceof ExceededLimitError) {
-    return Response.json({ error: { message: error.message, type: 'rate_limit_exceeded', code: 'all_keys_exhausted' } }, { status: 429, headers: { 'Retry-After': '30' } });
+    return Response.json(
+      { error: { message: error.message, type: 'rate_limit_exceeded', code: 'all_keys_exhausted' } },
+      { status: 429, headers: { 'Retry-After': '30' } },
+    );
   }
   if (error instanceof ServiceError) {
     const code = error.getErrorCode();
@@ -75,7 +83,8 @@ async function proxyOpenAI(c: ProxyContext, upstreamPath: string): Promise<Respo
   if (gateway instanceof Response) return gateway;
   const rawBody = await c.req.json().catch(() => null);
   const body = rawBody as { model?: unknown } | null;
-  if (!body || typeof body !== 'object') return Response.json({ error: { message: 'Invalid JSON body', type: 'invalid_request_error' } }, { status: 400 });
+  if (!body || typeof body !== 'object')
+    return Response.json({ error: { message: 'Invalid JSON body', type: 'invalid_request_error' } }, { status: 400 });
   const explicitId = c.req.header('x-provider-id')?.trim() || null;
   let provider: { id: string; kind: ProviderKind; baseUrl: string | null };
   try {
@@ -86,7 +95,12 @@ async function proxyOpenAI(c: ProxyContext, upstreamPath: string): Promise<Respo
   if (provider.kind === 'ANTHROPIC' || provider.kind === 'GEMINI') {
     const suffix = provider.kind === 'ANTHROPIC' ? 'anthropic' : 'gemini';
     return Response.json(
-      { error: { message: `Model routes to ${provider.kind}; use the/${suffix}/* endpoint or set x-provider-id`, type: 'invalid_request_error' } },
+      {
+        error: {
+          message: `Model routes to ${provider.kind}; use the/${suffix}/* endpoint or set x-provider-id`,
+          type: 'invalid_request_error',
+        },
+      },
       { status: 400 },
     );
   }
@@ -105,7 +119,10 @@ async function proxyOpenAI(c: ProxyContext, upstreamPath: string): Promise<Respo
       upstreamModel: typeof body.model === 'string' ? body.model : null,
       bodyBytes: new TextEncoder().encode(bodyText).length,
     });
-    return new Response(result.bodyText, { status: result.status, headers: { 'content-type': 'application/json', 'x-provider-key-id': result.providerKeyId } });
+    return new Response(result.bodyText, {
+      status: result.status,
+      headers: { 'content-type': 'application/json', 'x-provider-key-id': result.providerKeyId },
+    });
   } catch (error) {
     return errorResponse(error);
   }
@@ -114,6 +131,7 @@ async function proxyOpenAI(c: ProxyContext, upstreamPath: string): Promise<Respo
 function registerProxyRoutes(app: ProxyApp): void {
   app.post('/v1/chat/completions', (c) => proxyOpenAI(c, '/chat/completions'));
   app.post('/v1/embeddings', (c) => proxyOpenAI(c, '/embeddings'));
+  app.post('/v1/responses', (c) => proxyOpenAI(c, '/responses'));
   app.get('/v1/models', async (c) => {
     const gateway = await MiddlewareHandlers.requireGateway(c as never);
     if (gateway instanceof Response) return gateway;
@@ -136,7 +154,8 @@ function registerProxyRoutes(app: ProxyApp): void {
     if (gateway instanceof Response) return gateway;
     const rawBody = await c.req.json().catch(() => null);
     const body = rawBody as { model?: unknown } | null;
-    if (!body || typeof body !== 'object') return Response.json({ error: { message: 'Invalid JSON body', type: 'invalid_request_error' } }, { status: 400 });
+    if (!body || typeof body !== 'object')
+      return Response.json({ error: { message: 'Invalid JSON body', type: 'invalid_request_error' } }, { status: 400 });
     const explicitId = c.req.header('x-provider-id')?.trim() || null;
     let provider: { id: string; kind: ProviderKind; baseUrl: string | null };
     try {
@@ -145,24 +164,30 @@ function registerProxyRoutes(app: ProxyApp): void {
       return errorResponse(error);
     }
     if (provider.kind !== 'ANTHROPIC') {
-      return Response.json({ error: { message: 'Resolved provider is not Anthropic; set x-provider-id', type: 'invalid_request_error' } }, { status: 400 });
+      return Response.json(
+        { error: { message: 'Resolved provider is not Anthropic; set x-provider-id', type: 'invalid_request_error' } },
+        { status: 400 },
+      );
     }
     const bodyText = JSON.stringify(body);
     try {
       const scope = createRequestScope(c.env);
       const router = scope.get(Tokens.RouterService);
       const result = await router.proxy({
-          userEmail: gateway.userEmail,
-          gatewayKeyId: gateway.keyId,
-          providerId: provider.id,
-          providerKind: 'ANTHROPIC',
-          providerBaseUrl: provider.baseUrl,
-          upstreamPath: '/v1/messages',
-          upstreamBody: body,
-          upstreamModel: typeof body.model === 'string' ? body.model : null,
-          bodyBytes: new TextEncoder().encode(bodyText).length,
-        });
-      return new Response(result.bodyText, { status: result.status, headers: { 'content-type': 'application/json', 'x-provider-key-id': result.providerKeyId } });
+        userEmail: gateway.userEmail,
+        gatewayKeyId: gateway.keyId,
+        providerId: provider.id,
+        providerKind: 'ANTHROPIC',
+        providerBaseUrl: provider.baseUrl,
+        upstreamPath: '/v1/messages',
+        upstreamBody: body,
+        upstreamModel: typeof body.model === 'string' ? body.model : null,
+        bodyBytes: new TextEncoder().encode(bodyText).length,
+      });
+      return new Response(result.bodyText, {
+        status: result.status,
+        headers: { 'content-type': 'application/json', 'x-provider-key-id': result.providerKeyId },
+      });
     } catch (error) {
       return errorResponse(error);
     }
@@ -173,7 +198,11 @@ function registerProxyRoutes(app: ProxyApp): void {
     if (gateway instanceof Response) return gateway;
     const action = c.req.param('action');
     const match = /^(models\/[^:]+):(generateContent|streamGenerateContent)$/.exec(action ?? '');
-    if (!match) return Response.json({ error: { message: 'Path must be /gemini/v1beta/models/<model>:generateContent', type: 'invalid_request_error' } }, { status: 404 });
+    if (!match)
+      return Response.json(
+        { error: { message: 'Path must be /gemini/v1beta/models/<model>:generateContent', type: 'invalid_request_error' } },
+        { status: 404 },
+      );
     const rawGeminiBody = await c.req.json().catch(() => ({}));
     const body = rawGeminiBody as Record<string, unknown>;
     const explicitId = c.req.header('x-provider-id')?.trim() || null;
@@ -184,24 +213,30 @@ function registerProxyRoutes(app: ProxyApp): void {
       return errorResponse(error);
     }
     if (provider.kind !== 'GEMINI') {
-      return Response.json({ error: { message: 'Resolved provider is not Gemini; set x-provider-id', type: 'invalid_request_error' } }, { status: 400 });
+      return Response.json(
+        { error: { message: 'Resolved provider is not Gemini; set x-provider-id', type: 'invalid_request_error' } },
+        { status: 400 },
+      );
     }
     const bodyText = JSON.stringify(body);
     try {
       const scope = createRequestScope(c.env);
       const router = scope.get(Tokens.RouterService);
       const result = await router.proxy({
-          userEmail: gateway.userEmail,
-          gatewayKeyId: gateway.keyId,
-          providerId: provider.id,
-          providerKind: 'GEMINI',
-          providerBaseUrl: provider.baseUrl,
-          upstreamPath: `/v1beta/${match[1]}:${match[2]}`,
-          upstreamBody: body,
-          upstreamModel: match[1],
-          bodyBytes: new TextEncoder().encode(bodyText).length,
-        });
-      return new Response(result.bodyText, { status: result.status, headers: { 'content-type': 'application/json', 'x-provider-key-id': result.providerKeyId } });
+        userEmail: gateway.userEmail,
+        gatewayKeyId: gateway.keyId,
+        providerId: provider.id,
+        providerKind: 'GEMINI',
+        providerBaseUrl: provider.baseUrl,
+        upstreamPath: `/v1beta/${match[1]}:${match[2]}`,
+        upstreamBody: body,
+        upstreamModel: match[1],
+        bodyBytes: new TextEncoder().encode(bodyText).length,
+      });
+      return new Response(result.bodyText, {
+        status: result.status,
+        headers: { 'content-type': 'application/json', 'x-provider-key-id': result.providerKeyId },
+      });
     } catch (error) {
       return errorResponse(error);
     }

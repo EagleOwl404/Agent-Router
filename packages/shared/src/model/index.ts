@@ -24,6 +24,8 @@ export type {
   ProviderKind,
   ProviderStatus,
   ProviderKeyStatus,
+  ProviderKeyAuthType,
+  CodexOAuthStatus,
   ProviderMetadata,
   ProviderKeyMetadata,
   GatewayKeyMetadata,

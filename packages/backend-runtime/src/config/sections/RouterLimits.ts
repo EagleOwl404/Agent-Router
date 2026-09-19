@@ -1,5 +1,8 @@
 import { EnvParser } from '../EnvParser';
 import {
+  DEFAULT_CODEX_ACCESS_MIN_VALID_SECONDS,
+  DEFAULT_CODEX_OAUTH_STATE_EXPIRY_MINUTES,
+  DEFAULT_CODEX_REFRESH_BATCH_SIZE,
   DEFAULT_KEY_COOLDOWN_BASE_MS,
   DEFAULT_KEY_MAX_CONSECUTIVE_FAILURES,
   DEFAULT_MAX_GATEWAY_KEYS_PER_USER,
@@ -55,6 +58,18 @@ class RouterLimits {
 
   public getUsageRetentionDays(): number {
     return EnvParser.positiveInt(this.env, 'USAGE_RETENTION_DAYS', DEFAULT_USAGE_RETENTION_DAYS);
+  }
+
+  public getCodexOAuthStateExpiryMinutes(): number {
+    return EnvParser.positiveInt(this.env, 'CODEX_OAUTH_STATE_EXPIRY_MINUTES', DEFAULT_CODEX_OAUTH_STATE_EXPIRY_MINUTES);
+  }
+
+  public getCodexAccessMinValidSeconds(): number {
+    return EnvParser.positiveInt(this.env, 'CODEX_ACCESS_MIN_VALID_SECONDS', DEFAULT_CODEX_ACCESS_MIN_VALID_SECONDS);
+  }
+
+  public getCodexRefreshBatchSize(): number {
+    return EnvParser.positiveInt(this.env, 'CODEX_REFRESH_BATCH_SIZE', DEFAULT_CODEX_REFRESH_BATCH_SIZE);
   }
 }
 

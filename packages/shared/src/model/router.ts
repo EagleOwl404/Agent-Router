@@ -1,8 +1,12 @@
-export type ProviderKind = 'OPENAI' | 'ANTHROPIC' | 'GEMINI' | 'OPENAI_COMPAT';
+export type ProviderKind = 'OPENAI' | 'ANTHROPIC' | 'GEMINI' | 'OPENAI_COMPAT' | 'OPENAI_CODEX';
 
 export type ProviderStatus = 'active' | 'disabled';
 
 export type ProviderKeyStatus = 'active' | 'cooling' | 'exhausted' | 'disabled';
+
+export type ProviderKeyAuthType = 'static' | 'codex_oauth';
+
+export type CodexOAuthStatus = 'pending' | 'connected' | 'expired' | 'revoked';
 
 export interface ProviderMetadata {
   id: string;
@@ -34,6 +38,10 @@ export interface ProviderKeyMetadata {
   lastError: string | null;
   createdAt: number;
   updatedAt: number | null;
+  authType: ProviderKeyAuthType;
+  oauthStatus: CodexOAuthStatus | null;
+  codexAccountId: string | null;
+  accessExpiresAt: number | null;
 }
 
 export interface GatewayKeyMetadata {
@@ -64,7 +72,7 @@ export interface UsageLedgerMetadata {
   createdAt: number;
 }
 
-export const PROVIDER_KINDS: readonly ProviderKind[] = ['OPENAI', 'ANTHROPIC', 'GEMINI', 'OPENAI_COMPAT'];
+export const PROVIDER_KINDS: readonly ProviderKind[] = ['OPENAI', 'ANTHROPIC', 'GEMINI', 'OPENAI_COMPAT', 'OPENAI_CODEX'];
 
 export function isProviderKind(value: unknown): value is ProviderKind {
   return typeof value === 'string' && (PROVIDER_KINDS as readonly string[]).includes(value);

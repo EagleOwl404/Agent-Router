@@ -8,9 +8,12 @@ import { Badge } from '../components/ui/Badge';
 import type { Provider, ProviderKey } from '../types';
 import {
   addProviderKey,
+  authorizeCodexKey,
+  createCodexKey,
   createProvider,
   deleteProvider,
   deleteProviderKey,
+  disconnectCodexKey,
   listProviderKeys,
   listProviders,
   resetProviderKeyUsage,
@@ -59,6 +62,24 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const params = new URLSearchParams(globalThis.location.search);
+    const status = params.get('codex');
+    if (status === 'connected') {
+      showNotice('success', 'Codex Account Connected.');
+    } else if (status === 'error') {
+      showNotice('error', params.get('message') || 'Codex Authorization Failed.');
+    } else {
+      return;
+    }
+    params.delete('codex');
+    params.delete('keyId');
+    params.delete('message');
+    const query = params.toString();
+    globalThis.history.replaceState(null, '', `${globalThis.location.pathname}${query ? `?${query}` : ''}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const onCreate = async () => {
     if (!name.trim()) {
       showNotice('error', 'Provider Name Is Required.');
@@ -104,6 +125,29 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
     }
   };
 
+  const onAddCodexKey = async (providerId: string): Promise<void> => {
+    const form = keyForm[providerId] ?? { name: '', secret: '' };
+    const name = form.name.trim() || 'Codex OAuth';
+    try {
+      await createCodexKey(providerId, { name });
+      setKeyForm((prev) => ({ ...prev, [providerId]: { name: '', secret: '' } }));
+      showNotice('success', 'Codex Key Added. Connect It With OpenAI.');
+      await reload();
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Failed To Add Key.');
+    }
+  };
+
+  const onConnectCodex = async (providerId: string, keyId: string): Promise<void> => {
+    try {
+      const result = await authorizeCodexKey(providerId, keyId);
+      globalThis.open(result.authorizationUrl, '_blank', 'noopener');
+      showNotice('success', 'Complete Sign-In With OpenAI, Then Return Here.');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Failed To Start Codex Authorization.');
+    }
+  };
+
   return (
     <AppPage>
       <PageHeaderCard title="Providers" description="Pool Multiple Upstream Keys Per Provider. Failover Is Automatic." />
@@ -113,13 +157,24 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
           <CardTitle>New Provider</CardTitle>
         </CardHeader>
         <div className="flex flex-wrap gap-2">
-          <select value={kind} onChange={(e) => setKind(e.target.value)} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1.5 text-sm" aria-label="Provider Kind">
+          <select
+            value={kind}
+            onChange={(e) => setKind(e.target.value)}
+            className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1.5 text-sm"
+            aria-label="Provider Kind"
+          >
             <option value="OPENAI">OpenAI</option>
             <option value="ANTHROPIC">Anthropic</option>
             <option value="GEMINI">Gemini</option>
             <option value="OPENAI_COMPAT">OpenAI Compatible</option>
+            <option value="OPENAI_CODEX">OpenAI Codex (OAuth)</option>
           </select>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Provider Name (e.g. Primary OpenAI)" aria-label="Provider Name" />
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Provider Name (e.g. Primary OpenAI)"
+            aria-label="Provider Name"
+          />
           <Button variant="primary" size="sm" onClick={() => void onCreate()}>
             Create
           </Button>
@@ -144,29 +199,65 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
               </Button>
             </CardHeader>
             <div className="space-y-2">
-              {(keysByProvider[p.id] ?? []).map((k) => (
-                <div key={k.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-border)] p-2">
-                  <span className="text-sm font-medium">{k.name}</span>
-                  <Badge>{k.status}</Badge>
-                  <span className="text-xs text-[var(--color-text-muted)]">{k.keyHint ?? ''}</span>
-                  <span className="text-xs text-[var(--color-text-muted)]">{usageLabel(k)}</span>
-                  {k.lastError && <span className="text-xs text-red-500 truncate max-w-xs">{k.lastError}</span>}
-                  <span className="ml-auto flex gap-1">
-                    <Button variant="secondary" size="sm" onClick={() => runMutation(resetProviderKeyUsage(p.id, k.id), 'Usage Reset.')}>
-                      Reset Usage
-                    </Button>
-                    <Button variant="secondary" size="sm" onClick={() => runMutation(updateProviderKey(p.id, k.id, { status: k.status === 'disabled' ? 'active' : 'disabled' }), 'Key Updated.')}>
-                      {k.status === 'disabled' ? 'Enable' : 'Disable'}
-                    </Button>
-                    <Button variant="secondary" size="sm" onClick={() => onRotate(p.id, k.id)}>
-                      Rotate
-                    </Button>
-                    <Button variant="secondary" size="sm" onClick={() => runMutation(deleteProviderKey(p.id, k.id), 'Key Deleted.')}>
-                      Delete
-                    </Button>
-                  </span>
-                </div>
-              ))}
+              {(keysByProvider[p.id] ?? []).map((k) =>
+                k.authType === 'codex_oauth' ? (
+                  <div key={k.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-border)] p-2">
+                    <span className="text-sm font-medium">{k.name}</span>
+                    <Badge>{k.oauthStatus ?? 'pending'}</Badge>
+                    <span className="text-xs text-[var(--color-text-muted)]">{k.codexAccountId ?? 'Not Connected'}</span>
+                    <span className="text-xs text-[var(--color-text-muted)]">{usageLabel(k)}</span>
+                    {k.lastError && <span className="text-xs text-red-500 truncate max-w-xs">{k.lastError}</span>}
+                    <span className="ml-auto flex gap-1">
+                      <Button variant="primary" size="sm" onClick={() => void onConnectCodex(p.id, k.id)}>
+                        {k.oauthStatus === 'connected' ? 'Reconnect' : 'Connect With OpenAI'}
+                      </Button>
+                      {k.oauthStatus === 'connected' && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => runMutation(disconnectCodexKey(p.id, k.id), 'Codex Disconnected.')}
+                        >
+                          Disconnect
+                        </Button>
+                      )}
+                      <Button variant="secondary" size="sm" onClick={() => runMutation(deleteProviderKey(p.id, k.id), 'Key Deleted.')}>
+                        Delete
+                      </Button>
+                    </span>
+                  </div>
+                ) : (
+                  <div key={k.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-border)] p-2">
+                    <span className="text-sm font-medium">{k.name}</span>
+                    <Badge>{k.status}</Badge>
+                    <span className="text-xs text-[var(--color-text-muted)]">{k.keyHint ?? ''}</span>
+                    <span className="text-xs text-[var(--color-text-muted)]">{usageLabel(k)}</span>
+                    {k.lastError && <span className="text-xs text-red-500 truncate max-w-xs">{k.lastError}</span>}
+                    <span className="ml-auto flex gap-1">
+                      <Button variant="secondary" size="sm" onClick={() => runMutation(resetProviderKeyUsage(p.id, k.id), 'Usage Reset.')}>
+                        Reset Usage
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() =>
+                          runMutation(
+                            updateProviderKey(p.id, k.id, { status: k.status === 'disabled' ? 'active' : 'disabled' }),
+                            'Key Updated.',
+                          )
+                        }
+                      >
+                        {k.status === 'disabled' ? 'Enable' : 'Disable'}
+                      </Button>
+                      <Button variant="secondary" size="sm" onClick={() => onRotate(p.id, k.id)}>
+                        Rotate
+                      </Button>
+                      <Button variant="secondary" size="sm" onClick={() => runMutation(deleteProviderKey(p.id, k.id), 'Key Deleted.')}>
+                        Delete
+                      </Button>
+                    </span>
+                  </div>
+                ),
+              )}
               <div className="flex flex-wrap gap-2 pt-1">
                 <Input
                   value={keyForm[p.id]?.name ?? ''}
@@ -174,15 +265,25 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
                   placeholder="Key Name"
                   aria-label="Key Name"
                 />
-                <Input
-                  value={keyForm[p.id]?.secret ?? ''}
-                  onChange={(e) => setKeyForm((prev) => ({ ...prev, [p.id]: { name: prev[p.id]?.name ?? '', secret: e.target.value } }))}
-                  placeholder="Upstream Secret (sk-…)"
-                  aria-label="Upstream Secret"
-                />
-                <Button variant="primary" size="sm" onClick={() => void onAddKey(p.id)}>
-                  Add Key
-                </Button>
+                {p.kind === 'OPENAI_CODEX' ? (
+                  <Button variant="primary" size="sm" onClick={() => void onAddCodexKey(p.id)}>
+                    Add Codex Key
+                  </Button>
+                ) : (
+                  <>
+                    <Input
+                      value={keyForm[p.id]?.secret ?? ''}
+                      onChange={(e) =>
+                        setKeyForm((prev) => ({ ...prev, [p.id]: { name: prev[p.id]?.name ?? '', secret: e.target.value } }))
+                      }
+                      placeholder="Upstream Secret (sk-…)"
+                      aria-label="Upstream Secret"
+                    />
+                    <Button variant="primary" size="sm" onClick={() => void onAddKey(p.id)}>
+                      Add Key
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
           </Card>

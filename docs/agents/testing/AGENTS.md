@@ -1,6 +1,13 @@
 # Agent-Router — Testing
 
-Scope: unit tests. Parent index: `../../../AGENTS.md`.
+Scope: unit tests (`test/*.test.ts`, `pnpm test`) + Workers integration tests (`test/integration/`, `pnpm run test:integration`). Parent index: `../../../AGENTS.md`.
+
+## Integration Tests (`test/integration/`, ported from Otter)
+
+- Harness: `vitest.config.mts` (`@cloudflare/vitest-pool-workers`, `*.int.test.ts`), `wrangler.test.jsonc` (D1 `DB` + `AES_ENCRYPTION_KEY_SECRET`; no `CRON_TASKS` binding — fetch paths under test never touch it), `self.ts` (re-exports the API entry), `helpers/migrations.ts` (comment-aware SQL splitter), `helpers/setup.ts` (migrations + secrets-store + user seed).
+- Migration SQL is concatenated from top-level `migrations/*.sql` only — never `migrations/_archive_edge_git/`.
+- V8 coverage does not work under the workers pool; run without `--coverage` (thresholds omitted intentionally).
+- Suites: `health.int.test.ts` smoke (migrations incl. `codex_oauth_sessions`, `/health`, proxy 401, Codex callback redirect). Still thin: authed `/user/*` flows, Codex authorize/callback/proxy, cron tasks.
 
 Current thresholds (`vitest.config.mts`): **statements 20 / branches 15 / functions 12 / lines 22** — scaffold baseline set 2026-09-19 after the Edge-Git → Agent-Router rewrite (old thresholds 70/55/70/70 no longer applied; archived suites live in `test/_archive_edge_git/`, excluded from the run). Raise plan (stepwise, only when green with headroom): 20/15/12/22 → 50/40/50/50 → 70/55/70/70. Never lower thresholds to make CI pass.
 

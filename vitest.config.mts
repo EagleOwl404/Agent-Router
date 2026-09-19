@@ -17,7 +17,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['test/**/*.test.ts'],
-    exclude: ['test/integration/**', 'test/_archive_edge_git/**'],
+    exclude: ['test/integration/**', 'test/_archive/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],

@@ -9,12 +9,12 @@ const backgroundSrcPath = fileURLToPath(new URL('../../apps/background/src', imp
 const backendDataSrcPath = fileURLToPath(new URL('../../packages/backend-data/src', import.meta.url));
 const backendErrorsSrcPath = fileURLToPath(new URL('../../packages/backend-errors/src', import.meta.url));
 const backendRuntimeSrcPath = fileURLToPath(new URL('../../packages/backend-runtime/src', import.meta.url));
-const backendServicesSrcPath = fileURLToPath(new URL('../../packages/backend-services/src', import.meta.url));
+const gitProtocolSrcPath = fileURLToPath(new URL('../../packages/git-protocol/src', import.meta.url));
 const sharedSrcPath = fileURLToPath(new URL('../../packages/shared/src', import.meta.url));
+const backendServicesSrcPath = fileURLToPath(new URL('../../packages/backend-services/src', import.meta.url));
+const gitServiceSrcPath = fileURLToPath(new URL('../../packages/git-service/src', import.meta.url));
 
 const migrationsDir = resolve(fileURLToPath(new URL('../../migrations', import.meta.url)));
-// Top-level migration files only: migrations/_archive/ holds the
-// pre-rewrite legacy schema and must never be applied to the test database.
 const migrationFiles = readdirSync(migrationsDir)
   .filter((f) => f.endsWith('.sql'))
   .sort();
@@ -56,12 +56,22 @@ export default defineConfig({
   },
   resolve: {
     alias: [
+      { find: /^@agent-router\/background$/, replacement: `${backgroundSrcPath}/index.ts` },
+      { find: /^@agent-router\/backend-data$/, replacement: `${backendDataSrcPath}/index.ts` },
+      { find: /^@agent-router\/backend-errors$/, replacement: `${backendErrorsSrcPath}/index.ts` },
+      { find: /^@agent-router\/backend-runtime$/, replacement: `${backendRuntimeSrcPath}/index.ts` },
+      { find: /^@agent-router\/git-protocol$/, replacement: `${gitProtocolSrcPath}/index.ts` },
+      { find: /^@agent-router\/shared$/, replacement: `${sharedSrcPath}/index.ts` },
+      { find: /^@agent-router\/backend-services$/, replacement: `${backendServicesSrcPath}/index.ts` },
+      { find: /^@agent-router\/git-service$/, replacement: `${gitServiceSrcPath}/index.ts` },
       { find: '@agent-router/background', replacement: backgroundSrcPath },
       { find: '@agent-router/backend-data', replacement: backendDataSrcPath },
       { find: '@agent-router/backend-errors', replacement: backendErrorsSrcPath },
       { find: '@agent-router/backend-runtime', replacement: backendRuntimeSrcPath },
-      { find: '@agent-router/backend-services', replacement: backendServicesSrcPath },
+      { find: '@agent-router/git-protocol', replacement: gitProtocolSrcPath },
       { find: '@agent-router/shared', replacement: sharedSrcPath },
+      { find: '@agent-router/backend-services', replacement: backendServicesSrcPath },
+      { find: '@agent-router/git-service', replacement: gitServiceSrcPath },
       { find: /^@\//, replacement: `${apiSrcPath}/` },
     ],
   },

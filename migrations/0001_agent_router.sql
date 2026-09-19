@@ -1,4 +1,4 @@
--- Agent-Router v1 schema (fresh; Edge-Git migrations archived in _archive_edge_git/).
+-- Agent-Router v1 schema (fresh; legacy migrations archived in _archive/).
 -- Multi-user gateway: users own providers, each provider has many upstream keys,
 -- clients authenticate with per-user gateway keys. Usage is tracked per
 -- provider key against admin-set caps; the router fails over transparently.

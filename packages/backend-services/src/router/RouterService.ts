@@ -310,7 +310,17 @@ class RouterService {
           .catch(() => undefined);
       }
     }
-    if (lastStatus === 429) throw new ExceededLimitError('All provider keys are rate limited. Try again later.');
+    // lastError carries the final upstream body slice (<=300 chars, no
+    // secrets); include it so callers can tell account quota from key
+    // cooldown instead of guessing behind a generic message.
+    if (lastStatus === 429) {
+      const detail = lastError.slice(0, 200).trim();
+      throw new ExceededLimitError(
+        detail && detail !== 'Upstream request failed'
+          ? `All provider keys are rate limited. Upstream: ${detail}`
+          : 'All provider keys are rate limited. Try again later.',
+      );
+    }
     throw new BadRequestError(lastError.slice(0, 300) || 'Upstream request failed');
   }
 }

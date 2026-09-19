@@ -74,7 +74,7 @@ function proxyInput() {
     gatewayKeyId: 'gw1',
     providerId: 'p1',
     providerKind: 'OPENAI_CODEX' as const,
-    providerBaseUrl: 'https://api.openai.com/v1',
+    providerBaseUrl: 'https://chatgpt.com/backend-api/codex',
     upstreamPath: '/responses',
     upstreamBody: { model: 'gpt-5', input: 'hi' },
     upstreamModel: 'gpt-5',
@@ -83,13 +83,18 @@ function proxyInput() {
 }
 
 describe('RouterService Codex OAuth', () => {
-  it('builds codex calls with bearer plus account headers', () => {
+  it('builds codex calls against the Codex backend with bearer plus account headers', () => {
     const call = buildCodexCall(null, '/responses', 'at-1', 'acc-1', { model: 'gpt-5' });
-    expect(call.url).toBe('https://api.openai.com/v1/responses');
+    expect(call.url).toBe('https://chatgpt.com/backend-api/codex/responses');
     expect(call.headers.authorization).toBe('Bearer at-1');
     expect(call.headers['ChatGPT-Account-Id']).toBe('acc-1');
     const anon = buildCodexCall(null, '/responses', 'at-1', null, {});
     expect(anon.headers['ChatGPT-Account-Id']).toBeUndefined();
+  });
+
+  it('maps legacy platform base urls to the Codex backend', () => {
+    const legacy = buildCodexCall('https://api.openai.com/v1', '/responses', 'at-1', 'acc-1', {});
+    expect(legacy.url).toBe('https://chatgpt.com/backend-api/codex/responses');
   });
 
   it('proxies through OAuth keys with resolved access tokens', async () => {

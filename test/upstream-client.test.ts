@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildUpstreamCall, isRetryableStatus, parseUsage } from '@agent-router/backend-services/router';
+import { buildCodexCall, buildUpstreamCall, isRetryableStatus, parseUsage } from '@agent-router/backend-services/router';
 
 describe('UpstreamClient', () => {
   it('builds OpenAI bearer calls', () => {
@@ -18,6 +18,14 @@ describe('UpstreamClient', () => {
     const call = buildUpstreamCall('GEMINI', null, '/v1beta/models/gemini-2.0-flash:generateContent', 'g-key', {});
     expect(call.url).toContain('key=g-key');
     expect(call.headers.authorization).toBeUndefined();
+  });
+
+  it('builds Codex calls against the Codex backend, mapping legacy platform urls', () => {
+    expect(buildCodexCall(null, '/responses', 'at-1', 'acc-1', {}).url).toBe('https://chatgpt.com/backend-api/codex/responses');
+    expect(buildCodexCall('https://api.openai.com/v1', '/responses', 'at-1', null, {}).url).toBe(
+      'https://chatgpt.com/backend-api/codex/responses',
+    );
+    expect(buildCodexCall(null, '/responses', 'at-1', 'acc-1', {}).headers['ChatGPT-Account-Id']).toBe('acc-1');
   });
 
   it('parses usage per kind', () => {

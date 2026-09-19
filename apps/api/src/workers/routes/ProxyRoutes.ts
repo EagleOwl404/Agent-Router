@@ -42,7 +42,9 @@ async function resolveProviderId(
   if (opts.kind) {
     const found = providers.find((p) => p.kind === opts.kind);
     if (found) return { id: found.id, kind: found.kind, baseUrl: found.baseUrl };
-    // Chat-model requests fall back to Codex OAuth when no static OpenAI provider exists.
+    // Responses requests fall back to Codex OAuth when no static OpenAI
+    // provider exists (chat/embeddings via Codex are rejected below with
+    // guidance — the Codex backend only serves the Responses API).
     if (opts.kind === 'OPENAI') {
       const codex = providers.find((p) => p.kind === 'OPENAI_CODEX');
       if (codex) return { id: codex.id, kind: codex.kind, baseUrl: codex.baseUrl };
@@ -98,6 +100,20 @@ async function proxyOpenAI(c: ProxyContext, upstreamPath: string): Promise<Respo
       {
         error: {
           message: `Model routes to ${provider.kind}; use the/${suffix}/* endpoint or set x-provider-id`,
+          type: 'invalid_request_error',
+        },
+      },
+      { status: 400 },
+    );
+  }
+  // Codex OAuth (ChatGPT subscription) tokens are honored by the Codex
+  // backend, which serves the Responses API — not platform chat/embeddings.
+  // Fail fast with guidance instead of 429ing upstream and cooling the key.
+  if (upstreamPath !== '/responses' && provider.kind === 'OPENAI_CODEX') {
+    return Response.json(
+      {
+        error: {
+          message: 'Codex OAuth providers only support POST /v1/responses with a Codex model; add an OPENAI provider for chat completions or embeddings',
           type: 'invalid_request_error',
         },
       },

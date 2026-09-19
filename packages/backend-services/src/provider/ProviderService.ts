@@ -21,7 +21,9 @@ const DEFAULT_BASE_URLS: Record<ProviderKind, string | null> = {
   ANTHROPIC: 'https://api.anthropic.com',
   GEMINI: 'https://generativelanguage.googleapis.com',
   OPENAI_COMPAT: null,
-  OPENAI_CODEX: 'https://api.openai.com/v1',
+  // ChatGPT subscription (Codex OAuth) tokens are honored by the Codex
+  // backend, not the OpenAI platform API.
+  OPENAI_CODEX: 'https://chatgpt.com/backend-api/codex',
 };
 
 const PRIVATE_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '[::1]']);

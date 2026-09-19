@@ -212,8 +212,8 @@ describe('CodexOAuthService device flow', () => {
     expect(status).toEqual({ status: 'connected', accountId: 'acc-9' });
     expect(calls.deviceConsumed).toEqual(['da-1']);
     const patch = (calls.connected[0] as { patch: { encryptedAccessToken: string; encryptedRefreshToken: string } }).patch;
-    expect(await KeyCrypto.decrypt(patch.encryptedAccessToken, MASTER)).toBe('at-1');
-    expect(await KeyCrypto.decrypt(patch.encryptedRefreshToken, MASTER)).toBe('rt-1');
+    expect(await KeyCrypto.decrypt(patch.encryptedAccessToken, MASTER, 'codex-oauth')).toBe('at-1');
+    expect(await KeyCrypto.decrypt(patch.encryptedRefreshToken, MASTER, 'codex-oauth')).toBe('rt-1');
   });
 
   it('stays pending on transient poll failures and expires without a session', async () => {
@@ -242,8 +242,8 @@ describe('CodexOAuthService refresh-token import', () => {
     expect(updated.id).toBe('k1');
     expect(calls.connected).toHaveLength(1);
     const patch = (calls.connected[0] as { patch: { encryptedAccessToken: string; encryptedRefreshToken: string } }).patch;
-    expect(await KeyCrypto.decrypt(patch.encryptedAccessToken, MASTER)).toBe('at-1');
-    expect(await KeyCrypto.decrypt(patch.encryptedRefreshToken, MASTER)).toBe('rt-1');
+    expect(await KeyCrypto.decrypt(patch.encryptedAccessToken, MASTER, 'codex-oauth')).toBe('at-1');
+    expect(await KeyCrypto.decrypt(patch.encryptedRefreshToken, MASTER, 'codex-oauth')).toBe('rt-1');
     expect(calls.deviceDeleted).toEqual(['k1']);
   });
 
@@ -272,7 +272,7 @@ describe('CodexOAuthService refresh-token import', () => {
   it('disconnect clears tokens and device sessions with revocation', async () => {
     const revokeFetch = deviceFetchStub();
     const withRefresh = makeService({
-      key: row({ oauth_status: 'connected', encrypted_refresh_token: await KeyCrypto.encrypt('rt-live', MASTER) }),
+      key: row({ oauth_status: 'connected', encrypted_refresh_token: await KeyCrypto.encrypt('rt-live', MASTER, 'codex-oauth') }),
       fetchImpl: revokeFetch as unknown as typeof fetch,
     });
     await withRefresh.svc.disconnect('p1', 'k1', 'u@x.y');

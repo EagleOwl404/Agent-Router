@@ -43,6 +43,18 @@
       "database_name": "agent-router-db",
     },
   ],
+  "secrets_store_secrets": [
+    {
+      "binding": "PROVIDER_KEYS_ENCRYPTION_SECRET",
+      "store_id": "00000000000000000000000000000000",
+      "secret_name": "agent-router-provider-keys-encryption-key",
+    },
+    {
+      "binding": "CODEX_OAUTH_ENCRYPTION_SECRET",
+      "store_id": "00000000000000000000000000000000",
+      "secret_name": "agent-router-codex-oauth-encryption-key",
+    },
+  ],
   "triggers": {
     "crons": ["*/10 * * * *"],
   },

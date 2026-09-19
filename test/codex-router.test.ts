@@ -7,7 +7,7 @@ import { AppConfiguration } from '@agent-router/backend-runtime/config';
 const MASTER = 'test-master-key';
 
 async function enc(secret: string): Promise<string> {
-  return KeyCrypto.encrypt(secret, MASTER);
+  return KeyCrypto.encrypt(secret, MASTER, 'codex-oauth');
 }
 
 function row(id: string, overrides: Record<string, unknown> = {}) {

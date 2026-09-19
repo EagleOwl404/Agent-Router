@@ -9,7 +9,7 @@ import { KeyCrypto } from './KeyCrypto';
 interface ProviderKeyServiceEnv {
   DB: D1Queryable;
   MAX_KEYS_PER_PROVIDER?: string;
-  AES_ENCRYPTION_KEY_SECRET?: { get(): Promise<string> };
+  PROVIDER_KEYS_ENCRYPTION_SECRET?: { get(): Promise<string> };
 }
 
 interface ProviderKeyServiceDeps {
@@ -43,8 +43,8 @@ class ProviderKeyService {
     const masterKey =
       deps.masterKey ??
       (async () => {
-        if (!env.AES_ENCRYPTION_KEY_SECRET) throw new BadRequestError('Server key encryption is not configured');
-        return env.AES_ENCRYPTION_KEY_SECRET.get();
+        if (!env.PROVIDER_KEYS_ENCRYPTION_SECRET) throw new BadRequestError('Provider key encryption is not configured');
+        return env.PROVIDER_KEYS_ENCRYPTION_SECRET.get();
       });
     this.deps = {
       providerDAO: () => Promise.resolve(new ProviderDAO(env.DB)),
@@ -101,7 +101,7 @@ class ProviderKeyService {
       providerId,
       userEmail: normalized,
       name,
-      encryptedKey: await KeyCrypto.encrypt(secret, masterKey),
+      encryptedKey: await KeyCrypto.encrypt(secret, masterKey, 'provider-keys'),
       keyHint: KeyCrypto.hintFor(secret),
       tokenLimit,
       requestLimit,
@@ -173,7 +173,7 @@ class ProviderKeyService {
     const db = (dao as unknown as { database: { prepare(q: string): { bind(...v: unknown[]): { run(): Promise<unknown> } } } }).database;
     await db
       .prepare('UPDATE provider_keys SET encrypted_key = ?, key_hint = ?, consecutive_failures = 0, cooldown_until = NULL, status = ?, last_error = NULL, updated_at = ? WHERE id = ?')
-      .bind(await KeyCrypto.encrypt(raw, masterKey), KeyCrypto.hintFor(raw), current.status === 'disabled' ? 'disabled' : 'active', now, keyId)
+      .bind(await KeyCrypto.encrypt(raw, masterKey, 'provider-keys'), KeyCrypto.hintFor(raw), current.status === 'disabled' ? 'disabled' : 'active', now, keyId)
       .run();
     return (await dao.getMetadataById(keyId)) as ProviderKeyMetadata;
   }
@@ -202,7 +202,7 @@ class ProviderKeyService {
     const dao = await this.deps.providerKeyDAO();
     const current = await dao.getById(keyId);
     if (!current || current.provider_id !== providerId) throw new NotFoundError('Provider key not found');
-    return KeyCrypto.decrypt(current.encrypted_key, await this.deps.masterKey());
+    return KeyCrypto.decrypt(current.encrypted_key, await this.deps.masterKey(), 'provider-keys');
   }
 }
 

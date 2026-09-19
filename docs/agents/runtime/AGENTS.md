@@ -6,7 +6,7 @@ Scope: Wrangler bindings, build output, env vars. Parent index: `../../../AGENTS
 - `apps/web/vite.config.ts` proxies `/user` + `/v1` + `/anthropic` + `/gemini` → `http://localhost:8787` in dev; `closeBundle` embeds `dist/index.html` into `apps/api/src/generated/spa-shell.ts` (`SPA_HTML`) on build.
 - `apps/api/wrangler.template.jsonc` is the config template — copy to `wrangler.jsonc` per deployer; no committed `wrangler.jsonc`. Local `wrangler.jsonc` uses `DEV_AUTH_EMAIL=test@example.com`.
 - The Worker serves the SPA from `/`, `/settings`, `/providers`, `/keys`, `/usage`, `/user/*` catch-all in `AgentRouterWorker` (non-matching paths return `404`); proxy paths (`/v1/*`, `/anthropic/*`, `/gemini/*`) never hit the catch-all.
-- Bindings: D1 `DB`, DO `CRON_TASKS` (`CronTasksWorker`, `idFromName('global')`), cron `*/10 * * * *`; no KV/R2/Queues/AI bindings. Secrets: `AES_ENCRYPTION_KEY_SECRET` (Secrets Store, upstream-key encryption).
+- Bindings: D1 `DB`, DO `CRON_TASKS` (`CronTasksWorker`, `idFromName('global')`), cron `*/10 * * * *`; no KV/R2/Queues/AI bindings. Secrets: `PROVIDER_KEYS_ENCRYPTION_SECRET` (Secrets Store, static upstream-key encryption) + `CODEX_OAUTH_ENCRYPTION_SECRET` (Secrets Store, Codex OAuth token encryption).
 
 ## Required vars (no defaults)
 

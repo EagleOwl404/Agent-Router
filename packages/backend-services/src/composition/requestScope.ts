@@ -15,11 +15,13 @@ import { Tokens } from './tokens';
 
 interface RequestScopeEnv {
   DB: D1Queryable;
-  AES_ENCRYPTION_KEY_SECRET?: { get(): Promise<string> };
+  PROVIDER_KEYS_ENCRYPTION_SECRET?: { get(): Promise<string> };
+  CODEX_OAUTH_ENCRYPTION_SECRET?: { get(): Promise<string> };
 }
 
 interface RequestKeys {
-  masterKey: string;
+  providerKeysKey: string;
+  codexOAuthKey: string;
 }
 
 function createRequestScope(env: RequestScopeEnv): Container {
@@ -27,11 +29,15 @@ function createRequestScope(env: RequestScopeEnv): Container {
   scope.bindValue(Tokens.Env, env);
   scope.bindValue(Tokens.Db, env.DB);
 
-  const masterKey = memoizeAsync(() => {
-    if (!env.AES_ENCRYPTION_KEY_SECRET) throw new Error('AES_ENCRYPTION_KEY_SECRET is not configured for this scope.');
-    return env.AES_ENCRYPTION_KEY_SECRET.get();
+  const providerKeysKey = memoizeAsync(() => {
+    if (!env.PROVIDER_KEYS_ENCRYPTION_SECRET) throw new Error('PROVIDER_KEYS_ENCRYPTION_SECRET is not configured for this scope.');
+    return env.PROVIDER_KEYS_ENCRYPTION_SECRET.get();
   });
-  const keys = memoizeAsync(async (): Promise<RequestKeys> => ({ masterKey: await masterKey() }));
+  const codexOAuthKey = memoizeAsync(() => {
+    if (!env.CODEX_OAUTH_ENCRYPTION_SECRET) throw new Error('CODEX_OAUTH_ENCRYPTION_SECRET is not configured for this scope.');
+    return env.CODEX_OAUTH_ENCRYPTION_SECRET.get();
+  });
+  const keys = memoizeAsync(async (): Promise<RequestKeys> => ({ providerKeysKey: await providerKeysKey(), codexOAuthKey: await codexOAuthKey() }));
   scope.bindValue(Tokens.Keys, keys);
 
   const daoDefs: Array<[string, () => Promise<unknown>]> = [
@@ -59,9 +65,14 @@ function createRequestScope(env: RequestScopeEnv): Container {
 
   const config = AppConfiguration.fromEnv(env);
 
-  async function resolveMasterKey(): Promise<string> {
+  async function resolveProviderKeysKey(): Promise<string> {
     const resolved = await keys();
-    return resolved.masterKey;
+    return resolved.providerKeysKey;
+  }
+
+  async function resolveCodexOAuthKey(): Promise<string> {
+    const resolved = await keys();
+    return resolved.codexOAuthKey;
   }
 
   scope.bind(Tokens.AccessAuthService, () => new AccessAuthService(env as never));
@@ -70,7 +81,7 @@ function createRequestScope(env: RequestScopeEnv): Container {
   scope.bind(Tokens.ProviderService, () => new ProviderService(env as never, { providerDAO, config }));
   scope.bind(
     Tokens.ProviderKeyService,
-    () => new ProviderKeyService(env as never, { providerDAO, providerKeyDAO, masterKey: resolveMasterKey, config }),
+    () => new ProviderKeyService(env as never, { providerDAO, providerKeyDAO, masterKey: resolveProviderKeysKey, config }),
   );
   scope.bind(
     Tokens.CodexOAuthService,
@@ -79,11 +90,11 @@ function createRequestScope(env: RequestScopeEnv): Container {
         providerDAO,
         providerKeyDAO,
         deviceSessionDAO: codexSessionDAO,
-        masterKey: resolveMasterKey,
+        masterKey: resolveCodexOAuthKey,
         config,
       }),
   );
-  scope.bind(Tokens.CodexTokenService, () => new CodexTokenService(env as never, { providerKeyDAO, masterKey: resolveMasterKey, config }));
+  scope.bind(Tokens.CodexTokenService, () => new CodexTokenService(env as never, { providerKeyDAO, masterKey: resolveCodexOAuthKey, config }));
   scope.bind(
     Tokens.RouterService,
     () =>
@@ -91,9 +102,9 @@ function createRequestScope(env: RequestScopeEnv): Container {
         providerDAO,
         providerKeyDAO,
         usageDAO,
-        masterKey: resolveMasterKey,
+        masterKey: resolveProviderKeysKey,
         config,
-        codexTokens: new CodexTokenService(env as never, { providerKeyDAO, masterKey: resolveMasterKey, config }),
+        codexTokens: new CodexTokenService(env as never, { providerKeyDAO, masterKey: resolveCodexOAuthKey, config }),
       }),
   );
   scope.bind(Tokens.UsageService, () => new UsageService(env as never, { usageDAO }));

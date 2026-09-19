@@ -6,7 +6,7 @@ import { KeyCrypto } from '@agent-router/backend-services/provider';
 const MASTER = 'test-master-key';
 
 async function enc(secret: string): Promise<string> {
-  return KeyCrypto.encrypt(secret, MASTER);
+  return KeyCrypto.encrypt(secret, MASTER, 'provider-keys');
 }
 
 function row(id: string, overrides: Record<string, unknown> = {}) {
@@ -51,7 +51,7 @@ function makeService(keys: Array<ReturnType<typeof row>>, fetchImpl: typeof fetc
     },
     database: { prepare: () => ({ bind: () => ({ run: async () => undefined }) }) },
   };
-  const env = { DB: {} as never, AES_ENCRYPTION_KEY_SECRET: { get: async () => MASTER } };
+  const env = { DB: {} as never, PROVIDER_KEYS_ENCRYPTION_SECRET: { get: async () => MASTER } };
   const svc = new RouterService(env, {
     providerDAO: () => Promise.resolve({ getById: async () => ({ id: 'p1', user_email: 'u@x.y', userEmail: 'u@x.y', status: 'active' }) } as never),
     providerKeyDAO: () => Promise.resolve(keyDAO as never),

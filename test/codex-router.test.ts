@@ -118,6 +118,21 @@ describe('RouterService Codex OAuth', () => {
     expect(events).toContain('success:k1');
   });
 
+  it('assembles Codex SSE to JSON for non-streaming clients and relays for streaming ones', async () => {
+    const k1 = row('k1', { encrypted_refresh_token: await enc('rt-1') });
+    const sse = 'event: response.completed\ndata: {"type":"response.completed","response":{"id":"r1","usage":{"input_tokens":2,"output_tokens":1}}}\n';
+    const fetchImpl = vi.fn(async () => new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    const codexTokens = { getAccessToken: vi.fn(async () => ({ accessToken: 'at-live', accountId: 'acc-1' })) };
+    const { svc } = makeService([k1], fetchImpl as unknown as typeof fetch, codexTokens);
+    const json = await svc.proxy({ ...proxyInput(), upstreamBody: { model: 'gpt-5', input: 'hi' } });
+    expect(json.status).toBe(200);
+    expect(json.contentType).toBe('application/json');
+    expect(JSON.parse(json.bodyText)).toEqual({ id: 'r1', usage: { input_tokens: 2, output_tokens: 1 } });
+    const relayed = await svc.proxy({ ...proxyInput(), upstreamBody: { model: 'gpt-5', input: 'hi', stream: true } });
+    expect(relayed.contentType).toBe('text/event-stream');
+    expect(relayed.bodyText).toBe(sse);
+  });
+
   it('refreshes once on 401 before failing over', async () => {
     const k1 = row('k1', { encrypted_refresh_token: await enc('rt-1') });
     const k2 = row('k2', { encrypted_refresh_token: await enc('rt-2') });

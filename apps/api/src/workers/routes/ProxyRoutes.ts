@@ -137,7 +137,7 @@ async function proxyOpenAI(c: ProxyContext, upstreamPath: string): Promise<Respo
     });
     return new Response(result.bodyText, {
       status: result.status,
-      headers: { 'content-type': 'application/json', 'x-provider-key-id': result.providerKeyId },
+      headers: { 'content-type': result.contentType ?? 'application/json', 'x-provider-key-id': result.providerKeyId },
     });
   } catch (error) {
     return errorResponse(error);

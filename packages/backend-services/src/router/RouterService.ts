@@ -6,7 +6,7 @@ import type { ProviderKind } from '@agent-router/shared';
 import { TimestampUtil, UUIDUtil } from '@agent-router/shared/utils';
 import { AppConfiguration } from '@agent-router/backend-runtime/config';
 import { KeyCrypto } from '../provider/KeyCrypto';
-import { buildCodexCall, buildUpstreamCall, isRetryableStatus, parseUsage } from './UpstreamClient';
+import { buildCodexCall, buildUpstreamCall, extractCodexCompletedResponse, isRetryableStatus, parseUsage } from './UpstreamClient';
 import type { UpstreamCall } from './UpstreamClient';
 
 interface RouterServiceEnv {
@@ -55,6 +55,7 @@ interface ProxyRequest {
 interface ProxySuccess {
   status: number;
   bodyText: string;
+  contentType: string | null;
   promptTokens: number;
   completionTokens: number;
   estimated: boolean;
@@ -87,6 +88,10 @@ class RouterService {
       usageDAO: () => Promise.resolve(new UsageLedgerDAO(env.DB)),
       masterKey,
       config,
+      // Bound fetch: Workers native fetch is this-sensitive and throws
+      // "Illegal invocation" when a stored bare reference is called as a
+      // method (unicorn/no-unnecessary-global-this suppressed here).
+      // eslint-disable-next-line unicorn/no-unnecessary-global-this
       fetchImpl: deps.fetchImpl ?? globalThis.fetch.bind(globalThis),
       codexTokens: deps.codexTokens,
       ...deps,
@@ -131,6 +136,26 @@ class RouterService {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * Maps a non-retryable upstream body to a client-facing error. The Codex
+   * backend answers failed auth/edge checks with its login HTML page
+   * instead of JSON; surface reconnect guidance rather than markup.
+   */
+  private static toUpstreamError(kind: ProviderKind, status: number, bodyText: string, lastError: string): BadRequestError {
+    if (kind === 'OPENAI_CODEX' && /^\s*</.test(bodyText)) {
+      const text = bodyText
+        .replaceAll(/<[^<>]*>/g, ' ')
+        .replaceAll(/\s+/g, ' ')
+        .trim()
+        .slice(0, 200);
+      const message =
+        `Codex backend returned a login page (status ${status}). Reconnect the key or verify ChatGPT account access.` +
+        (text ? ` Page: ${text}` : '');
+      return new BadRequestError(message.slice(0, 300));
+    }
+    return new BadRequestError(lastError.slice(0, 300));
   }
 
   public async proxy(req: ProxyRequest): Promise<ProxySuccess> {
@@ -195,10 +220,29 @@ class RouterService {
         }
         const bodyText = await upstream.text();
         const latencyMs = Date.now() - startedMs;
+        // The Codex backend only serves SSE: streaming clients get the relay
+        // verbatim, non-streaming clients get the completed response object
+        // re-assembled as JSON (raw SSE relay when assembly finds nothing).
+        let responseText = bodyText;
+        let responseContentType: string | null = null;
+        if (req.providerKind === 'OPENAI_CODEX') {
+          const clientStreaming = (req.upstreamBody as { stream?: unknown } | null)?.stream === true;
+          if (clientStreaming) {
+            responseContentType = 'text/event-stream';
+          } else {
+            const assembled = extractCodexCompletedResponse(bodyText);
+            if (assembled === null) {
+              responseContentType = 'text/event-stream';
+            } else {
+              responseText = assembled;
+              responseContentType = 'application/json';
+            }
+          }
+        }
         if (upstream.status >= 200 && upstream.status < 300) {
           let usage = { promptTokens: 0, completionTokens: 0, estimated: true };
           try {
-            usage = parseUsage(req.providerKind, JSON.parse(bodyText));
+            usage = parseUsage(req.providerKind, JSON.parse(responseText));
           } catch {
             usage = { promptTokens: 0, completionTokens: 0, estimated: true };
           }
@@ -229,7 +273,8 @@ class RouterService {
             .catch(() => undefined);
           return {
             status: upstream.status,
-            bodyText,
+            bodyText: responseText,
+            contentType: responseContentType,
             promptTokens: usage.promptTokens,
             completionTokens: usage.completionTokens,
             estimated: usage.estimated,
@@ -294,7 +339,7 @@ class RouterService {
             now: TimestampUtil.getCurrentUnixTimestampInSeconds(),
           })
           .catch(() => undefined);
-        const error = new BadRequestError(lastError.slice(0, 300));
+        const error = RouterService.toUpstreamError(req.providerKind, upstream.status, bodyText, lastError);
         (error as unknown as { statusCode?: number }).statusCode = upstream.status;
         throw error;
       } catch (error) {

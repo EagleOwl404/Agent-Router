@@ -73,6 +73,45 @@ function extractRefreshToken(input: { refreshToken?: unknown; authJson?: unknown
   return fromValue(input.refreshToken) ?? fromValue(input.authJson);
 }
 
+/**
+ * Extracts a ChatGPT account id from pasted credentials when present.
+ *
+ * Same nested shapes as extractRefreshToken (`tokens`/`credentials`/`auth`
+ * wrappers, `account_id`/`chatgpt_account_id` keys). Used as a backfill when
+ * the refreshed token's JWT carries no account claims — without an account
+ * id the gateway omits `ChatGPT-Account-Id` and the Codex backend answers
+ * with its login page instead of reaching the model. Bare token strings are
+ * never treated as account ids.
+ */
+function toAccountObject(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'string') return isRecord(value) ? value : null;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{')) return null;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function searchAccountObject(obj: Record<string, unknown> | null): string | null {
+  if (!obj) return null;
+  for (const key of ['account_id', 'chatgpt_account_id']) {
+    const direct = obj[key];
+    if (typeof direct === 'string' && direct.trim()) return direct.trim();
+  }
+  for (const key of ['tokens', 'credentials', 'auth']) {
+    const nested = searchAccountObject(toAccountObject(obj[key]));
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function extractAccountId(input: { refreshToken?: unknown; authJson?: unknown }): string | null {
+  return searchAccountObject(toAccountObject(input.refreshToken)) ?? searchAccountObject(toAccountObject(input.authJson));
+}
+
 class CodexOAuthService {
   private readonly deps: Required<CodexOAuthServiceDeps>;
 
@@ -93,6 +132,8 @@ class CodexOAuthService {
       deviceSessionDAO: () => Promise.resolve(new CodexDeviceSessionDAO(env.DB)),
       masterKey,
       config,
+      // Bound fetch: Workers native fetch is this-sensitive (see CodexOAuthClient).
+      // eslint-disable-next-line unicorn/no-unnecessary-global-this
       fetchImpl: deps.fetchImpl ?? globalThis.fetch.bind(globalThis),
       ...deps,
     };
@@ -257,7 +298,7 @@ class CodexOAuthService {
     await keyDAO.updateOAuthConnected(keyId, {
       encryptedAccessToken,
       encryptedRefreshToken,
-      accountId: refreshed.accountId,
+      accountId: refreshed.accountId ?? extractAccountId(input),
       accessExpiresAt: now + (refreshed.expiresIn ?? 864_000),
       now,
     });

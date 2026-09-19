@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCodexCall, buildUpstreamCall, isRetryableStatus, parseUsage } from '@agent-router/backend-services/router';
+import { buildCodexCall, buildUpstreamCall, extractCodexCompletedResponse, isRetryableStatus, parseUsage } from '@agent-router/backend-services/router';
 
 describe('UpstreamClient', () => {
   it('builds OpenAI bearer calls', () => {
@@ -26,6 +26,77 @@ describe('UpstreamClient', () => {
       'https://chatgpt.com/backend-api/codex/responses',
     );
     expect(buildCodexCall(null, '/responses', 'at-1', 'acc-1', {}).headers['ChatGPT-Account-Id']).toBe('acc-1');
+  });
+
+  it('wraps string inputs and forces store:false for the Codex backend', () => {
+    const call = JSON.parse(buildCodexCall(null, '/responses', 'at-1', null, { model: 'gpt-5.5', input: 'hi' }).body) as {
+      input: unknown;
+      store: unknown;
+    };
+    expect(call.input).toEqual([{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] }]);
+    expect(call.store).toBe(false);
+    const passthrough = JSON.parse(
+      buildCodexCall(null, '/responses', 'at-1', null, { model: 'gpt-5.5', input: [{ type: 'message', role: 'user', content: 'hi' }] }).body,
+    ) as { input: unknown };
+    expect(passthrough.input).toEqual([{ type: 'message', role: 'user', content: 'hi' }]);
+  });
+
+  it('forces stream:true on Codex-bound bodies', () => {
+    const call = JSON.parse(buildCodexCall(null, '/responses', 'at-1', null, { model: 'gpt-5.5', input: 'hi' }).body) as {
+      stream: unknown;
+    };
+    expect(call.stream).toBe(true);
+  });
+
+  it('extracts the completed response from Codex SSE', () => {
+    const sse = [
+      'event: response.created',
+      'data: {"type":"response.created","response":{"id":"r1"}}',
+      '',
+      'event: response.output_text.delta',
+      'data: {"type":"response.output_text.delta","delta":"hi"}',
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"r1","output_text":"hi"}}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    expect(JSON.parse(extractCodexCompletedResponse(sse) as string)).toEqual({
+      id: 'r1',
+      output_text: 'hi',
+      output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hi' }] }],
+    });
+    expect(extractCodexCompletedResponse('data: {"type":"response.output_text.delta","delta":"hi"}\n')).toBeNull();
+    expect(extractCodexCompletedResponse('not an event stream')).toBeNull();
+  });
+
+  it('rebuilds Codex output from stream events when the completed snapshot is empty', () => {
+    const sse = [
+      'event: response.output_item.done',
+      'data: {"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text","text":"hi"}]}}',
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"r1","output":[]}}',
+      '',
+    ].join('\n');
+    expect(JSON.parse(extractCodexCompletedResponse(sse) as string)).toMatchObject({
+      id: 'r1',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'hi' }] }],
+    });
+    const deltas = ['event: response.output_text.delta', 'data: {"type":"response.output_text.delta","delta":"hey"}', 'event: response.completed', 'data: {"type":"response.completed","response":{"id":"r2","output":[]}}'].join('\n');
+    expect(JSON.parse(extractCodexCompletedResponse(deltas) as string)).toMatchObject({
+      output: [{ content: [{ text: 'hey' }] }],
+    });
+  });
+
+  it('parses Codex usage from input/output tokens', () => {
+    expect(parseUsage('OPENAI_CODEX', { usage: { input_tokens: 12, output_tokens: 44, total_tokens: 56 } })).toMatchObject({
+      promptTokens: 12,
+      completionTokens: 44,
+      estimated: false,
+    });
+    expect(parseUsage('OPENAI_CODEX', {})).toMatchObject({ estimated: true });
   });
 
   it('parses usage per kind', () => {

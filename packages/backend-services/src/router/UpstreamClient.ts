@@ -54,8 +54,62 @@ function resolveCodexBase(baseUrl: string | null): string {
   return trimmed;
 }
 
+/**
+ * Normalizes a Responses body for the Codex backend: `input` must be a list
+ * of blocks (plain strings are wrapped as a single user message), `store`
+ * must be false (the backend retains nothing for ChatGPT-backed calls), and
+ * `stream` must be true (the backend only serves SSE). The gateway converts
+ * back to JSON for non-streaming clients. Every other field passes through.
+ */
+function normalizeCodexBody(body: unknown): unknown {
+  const base = (typeof body === 'object' && body !== null && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
+  const record: Record<string, unknown> = { ...base, store: false, stream: true };
+  if (typeof record.input === 'string') {
+    record.input = [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: record.input }] }];
+  }
+  return record;
+}
+
+/**
+ * Extracts the final response object from a Codex SSE stream (the
+ * `response.completed` event payload) so non-streaming clients receive plain
+ * JSON. The backend sometimes snapshots `output` empty, so output is rebuilt
+ * from `response.output_item.done` events (falling back to accumulated text
+ * deltas) when the snapshot carries none. Returns null when no completed
+ * event is present.
+ */
+function extractCodexCompletedResponse(sseText: string): string | null {
+  let completed: Record<string, unknown> | null = null;
+  const items: unknown[] = [];
+  let deltaText = '';
+  for (const line of sseText.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === '[DONE]') continue;
+    try {
+      const event = JSON.parse(payload) as { type?: unknown; delta?: unknown; item?: unknown; response?: unknown };
+      if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') deltaText += event.delta;
+      else if (event.type === 'response.output_item.done' && event.item !== undefined) items.push(event.item);
+      else if (event.type === 'response.completed' && typeof event.response === 'object' && event.response !== null) {
+        completed = event.response as Record<string, unknown>;
+      }
+    } catch {
+      // Ignore non-JSON SSE payloads (comments, heartbeat frames).
+    }
+  }
+  if (completed === null) return null;
+  if (!Array.isArray(completed['output']) || (completed['output'] as unknown[]).length === 0) {
+    if (items.length > 0) completed = { ...completed, output: items };
+    else if (deltaText) {
+      completed = { ...completed, output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: deltaText }] }] };
+    }
+  }
+  return JSON.stringify(completed);
+}
+
 function buildCodexCall(baseUrl: string | null, path: string, accessToken: string, accountId: string | null, body: unknown): UpstreamCall {
-  const payload = JSON.stringify(body ?? {});
+  const payload = JSON.stringify(normalizeCodexBody(body));
   const base = resolveCodexBase(baseUrl);
   // Required by the Codex backend: the Responses beta gate plus the CLI
   // originator (same values sent by the official Codex CLI and the
@@ -91,6 +145,12 @@ function parseUsage(kind: ProviderKind, responseJson: unknown): ParsedUsage {
       const completion = typeof usage.output_tokens === 'number' ? usage.output_tokens : 0;
       return { promptTokens: prompt, completionTokens: completion, estimated: false };
     }
+    if (kind === 'OPENAI_CODEX') {
+      const prompt = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
+      const completion = typeof usage.output_tokens === 'number' ? usage.output_tokens : 0;
+      if (prompt === 0 && completion === 0) return { promptTokens: 0, completionTokens: 0, estimated: true };
+      return { promptTokens: prompt, completionTokens: completion, estimated: false };
+    }
     const prompt = typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0;
     const completion = typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0;
     if (prompt === 0 && completion === 0) {
@@ -109,5 +169,5 @@ function isRetryableStatus(status: number): boolean {
   return RETRYABLE_STATUSES.has(status);
 }
 
-export { buildUpstreamCall, buildCodexCall, parseUsage, isRetryableStatus, CODEX_BASE_URL };
+export { buildUpstreamCall, buildCodexCall, parseUsage, isRetryableStatus, CODEX_BASE_URL, extractCodexCompletedResponse };
 export type { UpstreamCall, ParsedUsage };

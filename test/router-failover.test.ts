@@ -157,6 +157,29 @@ describe('RouterService failover', () => {
     ).rejects.toThrow(/Account quota hit/);
   });
 
+  it('maps Codex HTML error pages to reconnect guidance', async () => {
+    const k1 = row('k1');
+    k1.encrypted_key = await enc('sk-1');
+    const html = '<html><head><title>Just a moment...</title></head><body>Verify you are human</body></html>';
+    const fetchImpl = vi.fn(async () => new Response(html, { status: 400, headers: { 'content-type': 'text/html' } }));
+    const { svc, events } = makeService([k1], fetchImpl as unknown as typeof fetch);
+    await expect(
+      svc.proxy({
+        userEmail: 'u@x.y',
+        gatewayKeyId: 'gw1',
+        providerId: 'p1',
+        providerKind: 'OPENAI_CODEX',
+        providerBaseUrl: 'https://chatgpt.com/backend-api/codex',
+        upstreamPath: '/responses',
+        upstreamBody: { model: 'gpt-5.5', input: 'hi' },
+        upstreamModel: 'gpt-5.5',
+        bodyBytes: 10,
+      }),
+    ).rejects.toThrow(/login page.*Reconnect/i);
+    // Non-retryable: no failover cooldown recorded.
+    expect(events).not.toContain('failure:k1');
+  });
+
   it('surfaces non-retryable 4xx without failover', async () => {
     const k1 = row('k1');
     k1.encrypted_key = await enc('sk-1');

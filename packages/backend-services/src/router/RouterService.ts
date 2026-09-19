@@ -16,7 +16,7 @@ interface RouterServiceEnv {
   PROXY_MAX_BODY_BYTES?: string;
   KEY_COOLDOWN_BASE_MS?: string;
   KEY_MAX_CONSECUTIVE_FAILURES?: string;
-  AES_ENCRYPTION_KEY_SECRET?: { get(): Promise<string> };
+  PROVIDER_KEYS_ENCRYPTION_SECRET?: { get(): Promise<string> };
 }
 
 interface RouterServiceDeps {
@@ -78,8 +78,8 @@ class RouterService {
     const masterKey =
       deps.masterKey ??
       (async () => {
-        if (!env.AES_ENCRYPTION_KEY_SECRET) throw new BadRequestError('Server key encryption is not configured');
-        return env.AES_ENCRYPTION_KEY_SECRET.get();
+        if (!env.PROVIDER_KEYS_ENCRYPTION_SECRET) throw new BadRequestError('Provider key encryption is not configured');
+        return env.PROVIDER_KEYS_ENCRYPTION_SECRET.get();
       });
     this.deps = {
       providerDAO: () => Promise.resolve(new ProviderDAO(env.DB)),
@@ -119,7 +119,7 @@ class RouterService {
       const tokens = await resolver.getAccessToken(req.providerId, candidate.id, req.userEmail, forceRefresh ? { forceRefresh: true } : {});
       return buildCodexCall(req.providerBaseUrl, req.upstreamPath, tokens.accessToken, tokens.accountId, req.upstreamBody);
     }
-    const secret = await KeyCrypto.decrypt(candidate.encrypted_key, masterKey);
+    const secret = await KeyCrypto.decrypt(candidate.encrypted_key, masterKey, 'provider-keys');
     return buildUpstreamCall(req.providerKind, req.providerBaseUrl, req.upstreamPath, secret, req.upstreamBody);
   }
 

@@ -57,12 +57,12 @@ async function main() {
     for (const secret of config.secrets_store_secrets) {
       if (!checkSecret(secret.store_id, secret.secret_name)) {
         let secretValue: string;
-        if (secret.secret_name === 'agent-router-aes-encryption-key' || secret.secret_name === 'agent-router-action-encryption-key') {
+        if (
+          secret.secret_name === 'agent-router-provider-keys-encryption-key' ||
+          secret.secret_name === 'agent-router-codex-oauth-encryption-key'
+        ) {
           secretValue = await generateAESGCMKey();
-          console.log(`Generated AES encryption key`);
-        } else if (secret.secret_name === 'agent-router-action-signing-secret') {
-          secretValue = crypto.getRandomValues(new Uint8Array(32)).reduce((value, byte) => value + byte.toString(16).padStart(2, '0'), '');
-          console.log(`Generated action signing secret`);
+          console.log(`Generated AES encryption key for ${secret.secret_name}`);
         } else {
           throw new Error(`Unknown secret: ${secret.secret_name}`);
         }

@@ -7,7 +7,7 @@ const MASTER = 'test-master-key';
 const NOW = Math.floor(Date.now() / 1000);
 
 async function enc(secret: string): Promise<string> {
-  return KeyCrypto.encrypt(secret, MASTER);
+  return KeyCrypto.encrypt(secret, MASTER, 'codex-oauth');
 }
 
 function row(overrides: Record<string, unknown> = {}) {
@@ -81,7 +81,7 @@ describe('CodexTokenService', () => {
     const conditional = events.find((e) => e.name === 'conditional');
     expect(conditional).toBeDefined();
     const patch = (conditional as { args: unknown[] }).args[2] as { encryptedRefreshToken: string };
-    expect(await KeyCrypto.decrypt(patch.encryptedRefreshToken, MASTER)).toBe('rt-new');
+    expect(await KeyCrypto.decrypt(patch.encryptedRefreshToken, MASTER, 'codex-oauth')).toBe('rt-new');
   });
 
   it('marks keys revoked on invalid_grant and surfaces a reconnect error', async () => {

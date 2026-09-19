@@ -24,7 +24,7 @@ function makeService() {
       if (i >= 0) keys.splice(i, 1);
     },
   };
-  const env = { DB: {} as never, AES_ENCRYPTION_KEY_SECRET: { get: async () => MASTER } };
+  const env = { DB: {} as never, PROVIDER_KEYS_ENCRYPTION_SECRET: { get: async () => MASTER } };
   const svc = new ProviderKeyService(env, {
     providerDAO: () => Promise.resolve(providerDAO as never),
     providerKeyDAO: () => Promise.resolve(providerKeyDAO as never),

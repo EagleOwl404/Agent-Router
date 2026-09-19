@@ -9,7 +9,7 @@ import { CodexOAuthClient } from './CodexOAuthClient';
 interface CodexTokenServiceEnv {
   DB: D1Queryable;
   CODEX_ACCESS_MIN_VALID_SECONDS?: string;
-  AES_ENCRYPTION_KEY_SECRET?: { get(): Promise<string> };
+  CODEX_OAUTH_ENCRYPTION_SECRET?: { get(): Promise<string> };
 }
 
 interface CodexTokenServiceDeps {
@@ -39,8 +39,8 @@ class CodexTokenService {
     const masterKey =
       deps.masterKey ??
       (async () => {
-        if (!env.AES_ENCRYPTION_KEY_SECRET) throw new BadRequestError('Server key encryption is not configured');
-        return env.AES_ENCRYPTION_KEY_SECRET.get();
+        if (!env.CODEX_OAUTH_ENCRYPTION_SECRET) throw new BadRequestError('Codex OAuth encryption is not configured');
+        return env.CODEX_OAUTH_ENCRYPTION_SECRET.get();
       });
     this.deps = {
       providerKeyDAO: () => Promise.resolve(new ProviderKeyDAO(env.DB)),
@@ -65,7 +65,7 @@ class CodexTokenService {
     if (!opts.forceRefresh && key?.encrypted_access_token && (key.access_expires_at ?? 0) - now > minValid) {
       const masterKey = await this.deps.masterKey();
       return {
-        accessToken: await KeyCrypto.decrypt(key.encrypted_access_token, masterKey),
+        accessToken: await KeyCrypto.decrypt(key.encrypted_access_token, masterKey, 'codex-oauth'),
         accountId: key.codex_account_id ?? null,
         expiresAt: key.access_expires_at as number,
       };
@@ -115,7 +115,7 @@ class CodexTokenService {
     if (key.encrypted_access_token && (key.access_expires_at ?? 0) - now > minValid) {
       const masterKey = await this.deps.masterKey();
       return {
-        accessToken: await KeyCrypto.decrypt(key.encrypted_access_token, masterKey),
+        accessToken: await KeyCrypto.decrypt(key.encrypted_access_token, masterKey, 'codex-oauth'),
         accountId: key.codex_account_id ?? null,
         expiresAt: key.access_expires_at as number,
       };
@@ -124,7 +124,7 @@ class CodexTokenService {
     const oldEncryptedRefresh = key.encrypted_refresh_token;
     let refreshToken: string;
     try {
-      refreshToken = await KeyCrypto.decrypt(oldEncryptedRefresh, masterKey);
+      refreshToken = await KeyCrypto.decrypt(oldEncryptedRefresh, masterKey, 'codex-oauth');
     } catch {
       await keyDAO
         .setOAuthStatus(keyId, 'expired', 'Codex credentials cannot be decrypted. Reconnect the key.', now)
@@ -143,8 +143,8 @@ class CodexTokenService {
       throw error;
     }
     const [encryptedAccessToken, encryptedRefreshToken] = await Promise.all([
-      KeyCrypto.encrypt(tokens.accessToken, masterKey),
-      KeyCrypto.encrypt(tokens.refreshToken as string, masterKey),
+      KeyCrypto.encrypt(tokens.accessToken, masterKey, 'codex-oauth'),
+      KeyCrypto.encrypt(tokens.refreshToken as string, masterKey, 'codex-oauth'),
     ]);
     const accessExpiresAt = TimestampUtil.getCurrentUnixTimestampInSeconds() + (tokens.expiresIn ?? FALLBACK_ACCESS_TTL_SECONDS);
     // Conditional write: losers of a cross-isolate rotation race fall through to the winner's token.
@@ -156,7 +156,7 @@ class CodexTokenService {
       const latestExpiry = latest?.access_expires_at ?? 0;
       if (latest?.encrypted_access_token && latestExpiry > TimestampUtil.getCurrentUnixTimestampInSeconds()) {
         return {
-          accessToken: await KeyCrypto.decrypt(latest.encrypted_access_token, masterKey),
+          accessToken: await KeyCrypto.decrypt(latest.encrypted_access_token, masterKey, 'codex-oauth'),
           accountId: latest.codex_account_id ?? null,
           expiresAt: latest.access_expires_at as number,
         };

@@ -9,7 +9,7 @@ import { CodexOAuthClient } from './CodexOAuthClient';
 
 interface CodexOAuthServiceEnv {
   DB: D1Queryable;
-  AES_ENCRYPTION_KEY_SECRET?: { get(): Promise<string> };
+  CODEX_OAUTH_ENCRYPTION_SECRET?: { get(): Promise<string> };
 }
 
 interface CodexOAuthServiceDeps {
@@ -84,8 +84,8 @@ class CodexOAuthService {
     const masterKey =
       deps.masterKey ??
       (async () => {
-        if (!env.AES_ENCRYPTION_KEY_SECRET) throw new BadRequestError('Server key encryption is not configured');
-        return env.AES_ENCRYPTION_KEY_SECRET.get();
+        if (!env.CODEX_OAUTH_ENCRYPTION_SECRET) throw new BadRequestError('Codex OAuth encryption is not configured');
+        return env.CODEX_OAUTH_ENCRYPTION_SECRET.get();
       });
     this.deps = {
       providerDAO: () => Promise.resolve(new ProviderDAO(env.DB)),
@@ -202,8 +202,8 @@ class CodexOAuthService {
       );
       const masterKey = await this.deps.masterKey();
       const [encryptedAccessToken, encryptedRefreshToken] = await Promise.all([
-        KeyCrypto.encrypt(tokens.accessToken, masterKey),
-        KeyCrypto.encrypt(tokens.refreshToken as string, masterKey),
+        KeyCrypto.encrypt(tokens.accessToken, masterKey, 'codex-oauth'),
+        KeyCrypto.encrypt(tokens.refreshToken as string, masterKey, 'codex-oauth'),
       ]);
       const accessExpiresAt = now + (tokens.expiresIn ?? 864_000);
       await keyDAO.updateOAuthConnected(keyId, {
@@ -251,8 +251,8 @@ class CodexOAuthService {
     const now = TimestampUtil.getCurrentUnixTimestampInSeconds();
     const masterKey = await this.deps.masterKey();
     const [encryptedAccessToken, encryptedRefreshToken] = await Promise.all([
-      KeyCrypto.encrypt(refreshed.accessToken, masterKey),
-      KeyCrypto.encrypt(refreshed.refreshToken ?? pasted, masterKey),
+      KeyCrypto.encrypt(refreshed.accessToken, masterKey, 'codex-oauth'),
+      KeyCrypto.encrypt(refreshed.refreshToken ?? pasted, masterKey, 'codex-oauth'),
     ]);
     await keyDAO.updateOAuthConnected(keyId, {
       encryptedAccessToken,
@@ -275,7 +275,7 @@ class CodexOAuthService {
     if (key?.encrypted_refresh_token) {
       try {
         const masterKey = await this.deps.masterKey();
-        const refreshToken = await KeyCrypto.decrypt(key.encrypted_refresh_token, masterKey);
+        const refreshToken = await KeyCrypto.decrypt(key.encrypted_refresh_token, masterKey, 'codex-oauth');
         await CodexOAuthClient.revokeRefreshToken({ refreshToken }, this.deps.fetchImpl);
       } catch {
         // Best-effort revocation; local state is cleared regardless.

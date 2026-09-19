@@ -21,11 +21,13 @@ import type { UserService } from '../user/UserService';
 
 interface RequestScopeEnvShape {
   DB: D1Queryable;
-  AES_ENCRYPTION_KEY_SECRET?: { get(): Promise<string> };
+  PROVIDER_KEYS_ENCRYPTION_SECRET?: { get(): Promise<string> };
+  CODEX_OAUTH_ENCRYPTION_SECRET?: { get(): Promise<string> };
 }
 
 interface RequestKeysShape {
-  masterKey: string;
+  providerKeysKey: string;
+  codexOAuthKey: string;
 }
 
 const Tokens = {

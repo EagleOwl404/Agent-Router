@@ -175,7 +175,7 @@ describe('RouterService failover', () => {
         upstreamModel: 'gpt-5.5',
         bodyBytes: 10,
       }),
-    ).rejects.toThrow(/login page.*Reconnect/i);
+    ).rejects.toThrow(/login page.*no ChatGPT account is linked/i);
     // Non-retryable: no failover cooldown recorded.
     expect(events).not.toContain('failure:k1');
   });

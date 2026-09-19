@@ -1,0 +1,44 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "agent-router-integration-test",
+  "main": "self.ts",
+  "compatibility_date": "2025-11-29",
+  "compatibility_flags": ["nodejs_compat"],
+  // NOTE: no CRON_TASKS durable object binding — fetch paths under test never
+  // touch it (only the scheduled() entrypoint does).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "agent-router-test-db",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "secrets_store_secrets": [
+    {
+      "binding": "AES_ENCRYPTION_KEY_SECRET",
+      "store_id": "00000000-0000-0000-0000-000000000000",
+      "secret_name": "test-aes-encryption-key"
+    }
+  ],
+  "vars": {
+    "DEV_AUTH_EMAIL": "test@example.com",
+    "ENVIRONMENT": "production",
+    "DEBUG_MODE": "false",
+    "SITE_URL": "",
+    "POLICY_AUD": "test-aud",
+    "TEAM_DOMAIN": "https://test.cloudflareaccess.com",
+    "MAX_PROVIDERS_PER_USER": "10",
+    "MAX_KEYS_PER_PROVIDER": "10",
+    "MAX_GATEWAY_KEYS_PER_USER": "10",
+    "MAX_GATEWAY_KEY_EXPIRY_DAYS": "365",
+    "PROXY_TIMEOUT_MS": "30000",
+    "PROXY_MAX_ATTEMPTS": "4",
+    "PROXY_MAX_BODY_BYTES": "1048576",
+    "KEY_COOLDOWN_BASE_MS": "60000",
+    "KEY_MAX_CONSECUTIVE_FAILURES": "10",
+    "USAGE_RETENTION_DAYS": "90",
+    "CODEX_OAUTH_STATE_EXPIRY_MINUTES": "15",
+    "CODEX_ACCESS_MIN_VALID_SECONDS": "300",
+    "CODEX_REFRESH_BATCH_SIZE": "50"
+  }
+}

@@ -6,7 +6,7 @@ import type { ProviderKind } from '@agent-router/shared';
 import { TimestampUtil, UUIDUtil } from '@agent-router/shared/utils';
 import { AppConfiguration } from '@agent-router/backend-runtime/config';
 import { KeyCrypto } from '../provider/KeyCrypto';
-import { buildCodexCall, buildUpstreamCall, isRetryableStatus, parseUsage } from './UpstreamClient';
+import { buildCodexCall, buildUpstreamCall, extractCodexCompletedResponse, isRetryableStatus, parseUsage } from './UpstreamClient';
 import type { UpstreamCall } from './UpstreamClient';
 
 interface RouterServiceEnv {
@@ -55,6 +55,7 @@ interface ProxyRequest {
 interface ProxySuccess {
   status: number;
   bodyText: string;
+  contentType: string | null;
   promptTokens: number;
   completionTokens: number;
   estimated: boolean;
@@ -219,10 +220,29 @@ class RouterService {
         }
         const bodyText = await upstream.text();
         const latencyMs = Date.now() - startedMs;
+        // The Codex backend only serves SSE: streaming clients get the relay
+        // verbatim, non-streaming clients get the completed response object
+        // re-assembled as JSON (raw SSE relay when assembly finds nothing).
+        let responseText = bodyText;
+        let responseContentType: string | null = null;
+        if (req.providerKind === 'OPENAI_CODEX') {
+          const clientStreaming = (req.upstreamBody as { stream?: unknown } | null)?.stream === true;
+          if (clientStreaming) {
+            responseContentType = 'text/event-stream';
+          } else {
+            const assembled = extractCodexCompletedResponse(bodyText);
+            if (assembled === null) {
+              responseContentType = 'text/event-stream';
+            } else {
+              responseText = assembled;
+              responseContentType = 'application/json';
+            }
+          }
+        }
         if (upstream.status >= 200 && upstream.status < 300) {
           let usage = { promptTokens: 0, completionTokens: 0, estimated: true };
           try {
-            usage = parseUsage(req.providerKind, JSON.parse(bodyText));
+            usage = parseUsage(req.providerKind, JSON.parse(responseText));
           } catch {
             usage = { promptTokens: 0, completionTokens: 0, estimated: true };
           }
@@ -253,7 +273,8 @@ class RouterService {
             .catch(() => undefined);
           return {
             status: upstream.status,
-            bodyText,
+            bodyText: responseText,
+            contentType: responseContentType,
             promptTokens: usage.promptTokens,
             completionTokens: usage.completionTokens,
             estimated: usage.estimated,

@@ -3,7 +3,7 @@
 Scope: Wrangler bindings, build output, env vars. Parent index: `../../../AGENTS.md`.
 
 - Root `@agent-router/monorepo`, pnpm workspaces (`apps/*`, `packages/*`).
-- `apps/web/vite.config.ts` proxies `/user` + `/api` + `/v1` + `/anthropic` + `/gemini` → `http://localhost:8787` in dev (`/api` covers the public Codex OAuth callback); `closeBundle` embeds `dist/index.html` into `apps/api/src/generated/spa-shell.ts` (`SPA_HTML`) on build.
+- `apps/web/vite.config.ts` proxies `/user` + `/v1` + `/anthropic` + `/gemini` → `http://localhost:8787` in dev; `closeBundle` embeds `dist/index.html` into `apps/api/src/generated/spa-shell.ts` (`SPA_HTML`) on build.
 - `apps/api/wrangler.template.jsonc` is the config template — copy to `wrangler.jsonc` per deployer; no committed `wrangler.jsonc`. Local `wrangler.jsonc` uses `DEV_AUTH_EMAIL=test@example.com`.
 - The Worker serves the SPA from `/`, `/settings`, `/providers`, `/keys`, `/usage`, `/user/*` catch-all in `AgentRouterWorker` (non-matching paths return `404`); proxy paths (`/v1/*`, `/anthropic/*`, `/gemini/*`) never hit the catch-all.
 - Bindings: D1 `DB`, DO `CRON_TASKS` (`CronTasksWorker`, `idFromName('global')`), cron `*/10 * * * *`; no KV/R2/Queues/AI bindings. Secrets: `AES_ENCRYPTION_KEY_SECRET` (Secrets Store, upstream-key encryption).
@@ -22,8 +22,6 @@ Scope: Wrangler bindings, build output, env vars. Parent index: `../../../AGENTS
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | App    | `DEBUG_MODE` (`false`), `SITE_URL` (`""`)                                                                                                                                                                                             |
 | Router | `MAX_PROVIDERS_PER_USER` (`10`), `MAX_KEYS_PER_PROVIDER` (`10`), `MAX_GATEWAY_KEYS_PER_USER` (`10`), `MAX_GATEWAY_KEY_EXPIRY_DAYS` (`365`), `PROXY_TIMEOUT_MS` (`30000`), `PROXY_MAX_ATTEMPTS` (`4`), `PROXY_MAX_BODY_BYTES` (`1048576`), `KEY_COOLDOWN_BASE_MS` (`60000`), `KEY_MAX_CONSECUTIVE_FAILURES` (`10`), `USAGE_RETENTION_DAYS` (`90`) |
-
-Set `SITE_URL` to the exact public origin (e.g. `https://gw.example.com`) on custom-domain deployments — the Codex OAuth `redirect_uri` prefers it over the request origin, otherwise OpenAI rejects the callback with `redirect_uri_mismatch`.
 
 Add new env vars in `ConfigurationDefaults.ts` (+ `ConfigurationManager` getter + `AppConfiguration` method + `RouterLimits` section where applicable), not inline.
 

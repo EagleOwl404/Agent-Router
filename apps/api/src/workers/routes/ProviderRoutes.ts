@@ -1,6 +1,5 @@
 import type { Hono } from 'hono';
 import { Tokens, createRequestScope } from '@agent-router/backend-services/composition';
-import { resolveCodexCallbackUri } from '@agent-router/backend-services/codex';
 import { ServiceError } from '@agent-router/backend-errors';
 
 type ProviderApp = Hono<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
@@ -157,16 +156,34 @@ function registerProviderRoutes(app: ProviderApp): void {
     }
   });
 
-  app.post('/user/providers/:id/keys/:keyId/codex/authorize', async (c) => {
+  // Codex device-code flow (OPENAI_CODEX providers): start a device
+  // authorization, poll its status, or import a pasted refresh token.
+  app.post('/user/providers/:id/keys/:keyId/codex/device/start', async (c) => {
     const email = c.get('AuthenticatedUserEmailAddress');
     try {
-      const scope = createRequestScope(c.env);
-      // Prefer SITE_URL (exact public origin) so the stored redirect_uri
-      // matches the origin OpenAI redirects back to on custom domains.
-      const siteUrl = scope.get(Tokens.AppConfig).getSiteUrl();
-      const redirectUri = resolveCodexCallbackUri(siteUrl, new URL(c.req.url).origin, c.req.param('keyId'));
-      const svc = scope.get(Tokens.CodexOAuthService);
-      return c.json(await svc.createAuthorization(c.req.param('id'), c.req.param('keyId'), email, redirectUri));
+      const svc = createRequestScope(c.env).get(Tokens.CodexOAuthService);
+      return c.json(await svc.startDeviceAuthorization(c.req.param('id'), c.req.param('keyId'), email), 201);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Failed' }, statusOf(error));
+    }
+  });
+
+  app.get('/user/providers/:id/keys/:keyId/codex/device/status', async (c) => {
+    const email = c.get('AuthenticatedUserEmailAddress');
+    try {
+      const svc = createRequestScope(c.env).get(Tokens.CodexOAuthService);
+      return c.json(await svc.pollDeviceAuthorization(c.req.param('id'), c.req.param('keyId'), email));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Failed' }, statusOf(error));
+    }
+  });
+
+  app.post('/user/providers/:id/keys/:keyId/codex/token', async (c) => {
+    const email = c.get('AuthenticatedUserEmailAddress');
+    const body = (await c.req.json().catch(() => ({}))) as { refreshToken?: unknown; authJson?: unknown };
+    try {
+      const svc = createRequestScope(c.env).get(Tokens.CodexOAuthService);
+      return c.json(await svc.importRefreshToken(c.req.param('id'), c.req.param('keyId'), email, body));
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : 'Failed' }, statusOf(error));
     }

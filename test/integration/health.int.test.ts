@@ -7,11 +7,17 @@ describe('integration smoke', () => {
     await applyMigrations(env.DB);
   });
 
-  it('applies migrations including the codex oauth tables', async () => {
+  it('applies migrations including the codex device tables', async () => {
     const result = await env.DB.prepare(
-      `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'providers', 'provider_keys', 'codex_oauth_sessions') ORDER BY name`,
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'providers', 'provider_keys', 'codex_oauth_sessions', 'codex_device_sessions') ORDER BY name`,
     ).all<{ name: string }>();
-    expect((result.results ?? []).map((r) => r.name)).toEqual(['codex_oauth_sessions', 'provider_keys', 'providers', 'users']);
+    expect((result.results ?? []).map((r) => r.name)).toEqual([
+      'codex_device_sessions',
+      'codex_oauth_sessions',
+      'provider_keys',
+      'providers',
+      'users',
+    ]);
   });
 
   it('GET /health returns ok', async () => {
@@ -27,11 +33,5 @@ describe('integration smoke', () => {
       body: JSON.stringify({ model: 'gpt-4o', messages: [] }),
     });
     expect(response.status).toBe(401);
-  });
-
-  it('GET /api/codex/callback/:keyId surfaces provider errors as a redirect', async () => {
-    const response: Response = await SELF.fetch('http://localhost/api/codex/callback/k1?error=access_denied', { redirect: 'manual' });
-    expect([301, 302, 303, 307, 308]).toContain(response.status);
-    expect(response.headers.get('Location')).toContain('codex=error');
   });
 });

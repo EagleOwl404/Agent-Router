@@ -10,8 +10,8 @@ const apiSpaShellPath = path.resolve(apiGeneratedDir, 'spa-shell.ts');
 
 const apiTarget = 'http://localhost:8787';
 
-// Management + proxy + OAuth API prefixes live under `/user`, `/api`,
-// `/v1`, `/anthropic`, `/gemini`. No SPA route shares those prefixes, so every match proxies to
+// Management + proxy API prefixes live under `/user`, `/v1`, `/anthropic`,
+// `/gemini`. No SPA route shares those prefixes, so every match proxies to
 // the worker without an `Accept` bypass.
 function apiProxy({ spaFallback = false }: { spaFallback?: boolean } = {}) {
   return {
@@ -47,7 +47,6 @@ export default defineConfig({
   server: {
     proxy: {
       '/user': apiProxy(),
-      '/api': apiProxy(),
       '/v1': apiProxy(),
       '/anthropic': apiProxy(),
       '/gemini': apiProxy(),

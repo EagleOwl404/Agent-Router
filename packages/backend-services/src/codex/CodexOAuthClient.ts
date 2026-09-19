@@ -3,16 +3,16 @@ import { OAuth2TokenNonRetryableError, OAuth2TokenRetryableError } from '@agent-
 // Public PKCE client embedded in the official Codex CLI / IDE extensions.
 // No client secret: PKCE S256 proves ownership of the authorization code.
 const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
-const CODEX_AUTHORIZE_URL = 'https://auth.openai.com/oauth/authorize';
 const CODEX_TOKEN_URL = 'https://auth.openai.com/oauth/token';
 const CODEX_REVOKE_URL = 'https://auth.openai.com/oauth/revoke';
-const CODEX_ORIGINATOR = 'codex_cli_rs';
-
-interface CodexAuthorizationInput {
-  redirectUri: string;
-  state: string;
-  codeChallenge: string;
-}
+// Device-code flow (hosted-friendly): the public client is allow-listed for
+// localhost callbacks only, so browser redirects cannot work from a gateway.
+// These endpoints need no redirect_uri.
+const CODEX_DEVICE_USERCODE_URL = 'https://auth.openai.com/api/accounts/deviceauth/usercode';
+const CODEX_DEVICE_TOKEN_URL = 'https://auth.openai.com/api/accounts/deviceauth/token';
+const CODEX_DEVICE_VERIFICATION_URL = 'https://auth.openai.com/codex/device';
+const CODEX_DEVICE_REDIRECT_URI = 'https://auth.openai.com/deviceauth/callback';
+const CODEX_DEVICE_CODE_TTL_MS = 15 * 60 * 1000;
 
 interface CodexTokenResult {
   accessToken: string;
@@ -22,19 +22,14 @@ interface CodexTokenResult {
   accountId: string | null;
 }
 
-function buildAuthorizationUrl(input: CodexAuthorizationInput): string {
-  const url = new URL(CODEX_AUTHORIZE_URL);
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('client_id', CODEX_CLIENT_ID);
-  url.searchParams.set('redirect_uri', input.redirectUri);
-  url.searchParams.set('scope', 'openid profile email');
-  url.searchParams.set('state', input.state);
-  url.searchParams.set('code_challenge', input.codeChallenge);
-  url.searchParams.set('code_challenge_method', 'S256');
-  url.searchParams.set('id_token_add_claims', 'true');
-  url.searchParams.set('originator', CODEX_ORIGINATOR);
-  return url.href;
+interface CodexDeviceCode {
+  deviceAuthId: string;
+  userCode: string;
+  pollIntervalSeconds: number;
+  expiresAtMs: number;
 }
+
+type CodexDevicePoll = { status: 'pending' } | { status: 'authorized'; authorizationCode: string; codeVerifier: string };
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   const parts = token.split('.');
@@ -64,7 +59,19 @@ function parseAccountId(idToken: string | null, accessToken: string | null): str
   const candidates = ['account_id', 'chatgpt_account_id', 'https://api.openai.com/account_id', 'org_id'] as const;
   const fromId = claimAsString(idToken ? decodeJwtPayload(idToken) : null, candidates);
   if (fromId) return fromId;
-  return claimAsString(accessToken ? decodeJwtPayload(accessToken) : null, candidates);
+  const fromAccess = claimAsString(accessToken ? decodeJwtPayload(accessToken) : null, candidates);
+  if (fromAccess) return fromAccess;
+  // Namespaced claim used by ChatGPT-issued tokens:
+  // {"https://api.openai.com/auth": {"chatgpt_account_id": "..."}}.
+  for (const token of [idToken, accessToken]) {
+    const payload = token ? decodeJwtPayload(token) : null;
+    const namespaced = payload?.['https://api.openai.com/auth'];
+    if (namespaced && typeof namespaced === 'object' && !Array.isArray(namespaced)) {
+      const accountId = (namespaced as Record<string, unknown>)['chatgpt_account_id'];
+      if (typeof accountId === 'string' && accountId.trim()) return accountId.trim();
+    }
+  }
+  return null;
 }
 
 function parseExpiresIn(raw: unknown): number | null {
@@ -167,16 +174,112 @@ async function revokeRefreshToken(input: { refreshToken: string }, fetchImpl: ty
   }
 }
 
+interface CodexDeviceUserCodeResponse {
+  device_auth_id?: string;
+  user_code?: string;
+  usercode?: string;
+  interval?: string | number;
+  expires_at?: string;
+}
+
+interface CodexDeviceTokenResponse {
+  authorization_code?: string;
+  code_verifier?: string;
+  code_challenge?: string;
+  error?: string;
+  error_description?: string;
+}
+
+function normalizeInterval(raw: string | number | undefined): number {
+  const n = typeof raw === 'string' ? Number(raw.trim()) : raw;
+  return typeof n === 'number' && Number.isSafeInteger(n) && n > 0 ? n : 5;
+}
+
+function normalizeExpiryMs(raw: string | undefined): number {
+  const parsed = typeof raw === 'string' ? Date.parse(raw) : NaN;
+  return Number.isFinite(parsed) ? parsed : Date.now() + CODEX_DEVICE_CODE_TTL_MS;
+}
+
+async function requestDeviceCode(fetchImpl: typeof fetch = fetch): Promise<CodexDeviceCode> {
+  let response: Response;
+  try {
+    response = await fetchImpl(CODEX_DEVICE_USERCODE_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ client_id: CODEX_CLIENT_ID }),
+    });
+  } catch (error) {
+    throw new OAuth2TokenRetryableError(
+      error instanceof Error ? `Codex device code request failed: ${error.message}` : 'Codex device code request failed',
+    );
+  }
+  let data: CodexDeviceUserCodeResponse;
+  try {
+    data = (JSON.parse(await response.text()) as CodexDeviceUserCodeResponse) ?? {};
+  } catch {
+    throw new OAuth2TokenRetryableError(`Codex device code request failed with status ${response.status}`);
+  }
+  if (!response.ok || !data.device_auth_id || (!data.user_code && !data.usercode)) {
+    const message = `Codex device code request failed with status ${response.status}`;
+    if (response.status >= 400 && response.status < 500) throw new OAuth2TokenNonRetryableError(message);
+    throw new OAuth2TokenRetryableError(message);
+  }
+  return {
+    deviceAuthId: data.device_auth_id,
+    userCode: (data.user_code ?? data.usercode) as string,
+    pollIntervalSeconds: normalizeInterval(data.interval),
+    expiresAtMs: normalizeExpiryMs(data.expires_at),
+  };
+}
+
+async function pollDeviceCode(
+  input: { deviceAuthId: string; userCode: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<CodexDevicePoll> {
+  let response: Response;
+  try {
+    response = await fetchImpl(CODEX_DEVICE_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ device_auth_id: input.deviceAuthId, user_code: input.userCode }),
+    });
+  } catch (error) {
+    throw new OAuth2TokenRetryableError(error instanceof Error ? `Codex device poll failed: ${error.message}` : 'Codex device poll failed');
+  }
+  // The device endpoint answers 403/404/429 while the user has not approved yet.
+  if ([403, 404, 429].includes(response.status)) {
+    return { status: 'pending' };
+  }
+  let data: CodexDeviceTokenResponse;
+  try {
+    data = (JSON.parse(await response.text()) as CodexDeviceTokenResponse) ?? {};
+  } catch {
+    throw new OAuth2TokenRetryableError(`Codex device poll failed with status ${response.status}`);
+  }
+  if (!response.ok) {
+    const message = `Codex device authorization failed: ${data.error_description ?? data.error ?? response.statusText}`;
+    if (response.status >= 400 && response.status < 500) throw new OAuth2TokenNonRetryableError(message);
+    throw new OAuth2TokenRetryableError(message);
+  }
+  if (!data.authorization_code || !data.code_verifier) {
+    // A 200 without a code means approval is still in flight. Keep waiting.
+    return { status: 'pending' };
+  }
+  return { status: 'authorized', authorizationCode: data.authorization_code, codeVerifier: data.code_verifier };
+}
+
 export { CodexOAuthClient };
-export type { CodexAuthorizationInput, CodexTokenResult };
+export type { CodexTokenResult, CodexDeviceCode, CodexDevicePoll };
 
 const CodexOAuthClient = {
   clientId: CODEX_CLIENT_ID,
-  authorizeUrl: CODEX_AUTHORIZE_URL,
   tokenUrl: CODEX_TOKEN_URL,
-  buildAuthorizationUrl,
+  deviceVerificationUrl: CODEX_DEVICE_VERIFICATION_URL,
+  deviceRedirectUri: CODEX_DEVICE_REDIRECT_URI,
   exchangeCode,
   refreshAccessToken,
   revokeRefreshToken,
   parseAccountId,
+  requestDeviceCode,
+  pollDeviceCode,
 };

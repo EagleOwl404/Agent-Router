@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AppPage } from '../components/layout/AppPage';
 import { PageHeaderCard } from '../components/layout/PageHeaderCard';
@@ -9,18 +9,21 @@ import { Badge } from '../components/ui/Badge';
 import type { Provider, ProviderKey } from '../types';
 import {
   addProviderKey,
-  authorizeCodexKey,
   createCodexKey,
   createProvider,
   deleteProvider,
   deleteProviderKey,
   disconnectCodexKey,
+  getCodexDeviceStatus,
+  importCodexToken,
   listProviderKeys,
   listProviders,
   resetProviderKeyUsage,
   rotateProviderKey,
+  startCodexDevice,
   updateProviderKey,
 } from '../services/providerService';
+import type { CodexDeviceStart } from '../services/providerService';
 
 function usageLabel(key: ProviderKey): string {
   const parts: string[] = [`${key.usedRequests} Reqs`, `${key.usedTokens} Tokens`];
@@ -37,6 +40,9 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(true);
   const [keyForm, setKeyForm] = useState<Record<string, { name: string; secret: string }>>({});
+  const [deviceByKey, setDeviceByKey] = useState<Record<string, CodexDeviceStart>>({});
+  const deviceByKeyRef = useRef<Record<string, CodexDeviceStart>>({});
+  const deviceTimers = useRef<Record<string, number | undefined>>({});
 
   const reload = async () => {
     try {
@@ -61,27 +67,12 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial mount fetch is the intended sync point
     void reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const params = new URLSearchParams(globalThis.location.search);
-    const status = params.get('codex');
-    if (status === 'connected') {
-      showNotice('success', t('providers.codexConnected', 'Codex Account Connected.'));
-    } else if (status === 'error') {
-      showNotice('error', params.get('message') || t('providers.codexAuthFailed', 'Codex Authorization Failed.'));
-    } else {
-      return;
-    }
-    params.delete('codex');
-    params.delete('keyId');
-    params.delete('message');
-    const query = params.toString();
-    globalThis.history.replaceState(null, '', `${globalThis.location.pathname}${query ? `?${query}` : ''}`);
-    // The OAuth round-trip happened in this tab, so refresh key statuses now.
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- post-OAuth return is the intended sync point
-    void reload();
+    const timers = deviceTimers.current;
+    return () => {
+      for (const id of Object.values(timers)) {
+        if (id !== undefined) clearTimeout(id);
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -136,23 +127,94 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
     try {
       await createCodexKey(providerId, { name });
       setKeyForm((prev) => ({ ...prev, [providerId]: { name: '', secret: '' } }));
-      showNotice('success', t('providers.codexKeyAdded', 'Codex Key Added. Connect It With OpenAI.'));
+      showNotice('success', t('providers.codexKeyAdded', 'Codex Key Added. Connect It With ChatGPT Or Import A Token.'));
       await reload();
     } catch (error) {
       showNotice('error', error instanceof Error ? error.message : t('providers.codexKeyAddFailed', 'Failed To Add Key.'));
     }
   };
 
-  const onConnectCodex = async (providerId: string, keyId: string): Promise<void> => {
+  const clearDevicePoll = (keyId: string): void => {
+    const timer = deviceTimers.current[keyId];
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      delete deviceTimers.current[keyId];
+    }
+    delete deviceByKeyRef.current[keyId];
+    setDeviceByKey((prev) => {
+      const next = { ...prev };
+      delete next[keyId];
+      return next;
+    });
+  };
+
+  const scheduleDevicePoll = (providerId: string, keyId: string, flow: CodexDeviceStart): void => {
+    clearDevicePoll(keyId);
+    deviceByKeyRef.current[keyId] = flow;
+    setDeviceByKey((prev) => ({ ...prev, [keyId]: flow }));
+    const delayMs = Math.max(1000, flow.pollIntervalSeconds * 1000);
+    deviceTimers.current[keyId] = setTimeout(() => void pollDeviceOnce(providerId, keyId), delayMs);
+  };
+
+  const pollDeviceOnce = async (providerId: string, keyId: string): Promise<void> => {
+    const current = deviceByKeyRef.current[keyId];
+    if (!current) return;
+    let status;
     try {
-      const result = await authorizeCodexKey(providerId, keyId);
-      // Same-tab redirect: the OAuth callback returns to this tab, so the
-      // ?codex= handler above can refresh statuses without manual reloads.
-      showNotice('success', t('providers.codexRedirecting', 'Redirecting To OpenAI To Complete Sign-In…'));
-      globalThis.location.assign(result.authorizationUrl);
+      status = await getCodexDeviceStatus(providerId, keyId);
+    } catch {
+      // Transient failure: keep polling while the code is still valid.
+      scheduleDevicePoll(providerId, keyId, current);
+      return;
+    }
+    switch (status.status) {
+      case 'connected': {
+        clearDevicePoll(keyId);
+        showNotice('success', t('providers.codexConnected', 'Codex Account Connected.'));
+        await reload();
+        break;
+      }
+      case 'expired': {
+        clearDevicePoll(keyId);
+        showNotice('error', t('providers.codexDeviceExpired', 'Codex Authorization Expired. Start Again And Approve Faster.'));
+        break;
+      }
+      case 'failed': {
+        clearDevicePoll(keyId);
+        showNotice('error', status.message || t('providers.codexAuthFailed', 'Codex Authorization Failed.'));
+        break;
+      }
+      default: {
+        scheduleDevicePoll(providerId, keyId, {
+          ...current,
+          expiresAt: status.expiresAt,
+          pollIntervalSeconds: status.pollIntervalSeconds,
+        });
+        break;
+      }
+    }
+  };
+
+  const onStartDeviceCodex = async (providerId: string, keyId: string): Promise<void> => {
+    try {
+      const flow = await startCodexDevice(providerId, keyId);
+      showNotice('success', t('providers.codexDeviceStarted', 'Enter The Code At OpenAI To Approve.'));
+      globalThis.open(flow.verificationUrl, '_blank', 'noopener');
+      scheduleDevicePoll(providerId, keyId, flow);
     } catch (error) {
       showNotice('error', error instanceof Error ? error.message : t('providers.codexStartFailed', 'Failed To Start Codex Authorization.'));
     }
+  };
+
+  const onCancelDeviceCodex = (keyId: string): void => {
+    clearDevicePoll(keyId);
+  };
+
+  const onImportCodexToken = (providerId: string, keyId: string): void => {
+    const pasted = globalThis.prompt(
+      t('providers.importTokenPrompt', 'Paste Your Refresh Token Or Auth JSON From The Codex App Or OpenCode'),
+    );
+    if (pasted) runMutation(importCodexToken(providerId, keyId, pasted), t('providers.codexTokenImported', 'Codex Token Imported.'));
   };
 
   return (
@@ -164,7 +226,7 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
           <p className="text-sm text-[var(--color-text-secondary)]">
             {t(
               'providers.codexHint',
-              'To Use ChatGPT OAuth Instead Of An API Key, Create An OpenAI Codex (OAuth) Provider, Add A Codex Key, Then Connect With OpenAI.',
+              'To Use ChatGPT OAuth Instead Of An API Key, Create An OpenAI Codex (OAuth) Provider, Add A Codex Key, Then Connect With ChatGPT Or Import A Token.',
             )}
           </p>
         </Card>
@@ -219,36 +281,71 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
             <div className="space-y-2">
               {(keysByProvider[p.id] ?? []).map((k) =>
                 k.authType === 'codex_oauth' ? (
-                  <div key={k.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-border)] p-2">
-                    <span className="text-sm font-medium">{k.name}</span>
-                    <Badge>{k.oauthStatus ?? 'pending'}</Badge>
-                    <span className="text-xs text-[var(--color-text-muted)]">
-                      {k.codexAccountId ?? t('providers.notConnected', 'Not Connected')}
-                    </span>
-                    <span className="text-xs text-[var(--color-text-muted)]">{usageLabel(k)}</span>
-                    {k.lastError && <span className="text-xs text-red-500 truncate max-w-xs">{k.lastError}</span>}
-                    <span className="ml-auto flex gap-1">
-                      <Button variant="primary" size="sm" onClick={() => void onConnectCodex(p.id, k.id)}>
-                        {k.oauthStatus === 'connected'
-                          ? t('providers.reconnectCodex', 'Reconnect')
-                          : t('providers.connectWithOpenAI', 'Connect With OpenAI')}
-                      </Button>
-                      {k.oauthStatus === 'connected' && (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() =>
-                            runMutation(disconnectCodexKey(p.id, k.id), t('providers.codexDisconnected', 'Codex Disconnected.'))
-                          }
-                        >
-                          Disconnect
+                  <Fragment key={k.id}>
+                    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-border)] p-2">
+                      <span className="text-sm font-medium">{k.name}</span>
+                      <Badge>{k.oauthStatus ?? 'pending'}</Badge>
+                      <span className="text-xs text-[var(--color-text-muted)]">
+                        {k.codexAccountId ?? t('providers.notConnected', 'Not Connected')}
+                      </span>
+                      <span className="text-xs text-[var(--color-text-muted)]">{usageLabel(k)}</span>
+                      {k.lastError && <span className="text-xs text-red-500 truncate max-w-xs">{k.lastError}</span>}
+                      <span className="ml-auto flex gap-1">
+                        {deviceByKey[k.id] === undefined ? (
+                          <Button variant="primary" size="sm" onClick={() => void onStartDeviceCodex(p.id, k.id)}>
+                            {k.oauthStatus === 'connected'
+                              ? t('providers.reconnectCodex', 'Reconnect')
+                              : t('providers.connectWithChatGPT', 'Connect With ChatGPT')}
+                          </Button>
+                        ) : (
+                          <Button variant="secondary" size="sm" onClick={() => onCancelDeviceCodex(k.id)}>
+                            {t('providers.cancelAuth', 'Cancel')}
+                          </Button>
+                        )}
+                        <Button variant="secondary" size="sm" onClick={() => onImportCodexToken(p.id, k.id)}>
+                          {t('providers.importToken', 'Import Token')}
                         </Button>
-                      )}
-                      <Button variant="secondary" size="sm" onClick={() => runMutation(deleteProviderKey(p.id, k.id), 'Key Deleted.')}>
-                        Delete
-                      </Button>
-                    </span>
-                  </div>
+                        {k.oauthStatus === 'connected' && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() =>
+                              runMutation(disconnectCodexKey(p.id, k.id), t('providers.codexDisconnected', 'Codex Disconnected.'))
+                            }
+                          >
+                            Disconnect
+                          </Button>
+                        )}
+                        <Button variant="secondary" size="sm" onClick={() => runMutation(deleteProviderKey(p.id, k.id), 'Key Deleted.')}>
+                          Delete
+                        </Button>
+                      </span>
+                    </div>
+                    {deviceByKey[k.id] !== undefined && (
+                      <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+                        <p className="text-sm text-[var(--color-text-secondary)]">
+                          {t('providers.deviceApproveHint', 'Enter This Code At OpenAI To Approve:')}
+                        </p>
+                        <p className="text-2xl font-mono font-bold tracking-widest">{deviceByKey[k.id]?.userCode}</p>
+                        <div className="flex flex-wrap gap-2">
+                          <a
+                            href={deviceByKey[k.id]?.verificationUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-[var(--color-accent)] hover:underline"
+                          >
+                            {t('providers.openVerificationPage', 'Open Verification Page →')}
+                          </a>
+                          <Button variant="secondary" size="sm" onClick={() => onCancelDeviceCodex(k.id)}>
+                            {t('providers.cancelAuth', 'Cancel')}
+                          </Button>
+                        </div>
+                        <p className="text-xs text-[var(--color-text-muted)]">
+                          {t('providers.deviceWaiting', 'Waiting For Approval… This Page Updates Automatically.')}
+                        </p>
+                      </div>
+                    )}
+                  </Fragment>
                 ) : (
                   <div key={k.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-border)] p-2">
                     <span className="text-sm font-medium">{k.name}</span>

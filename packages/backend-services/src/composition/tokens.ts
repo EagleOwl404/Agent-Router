@@ -1,5 +1,5 @@
 import type {
-  CodexOAuthSessionDAO,
+  CodexDeviceSessionDAO,
   GatewayKeyDAO,
   ProviderDAO,
   ProviderKeyDAO,
@@ -37,7 +37,7 @@ const Tokens = {
   GatewayKeyDAO: Symbol('GatewayKeyDAO') as Token<() => Promise<GatewayKeyDAO>>,
   ProviderDAO: Symbol('ProviderDAO') as Token<() => Promise<ProviderDAO>>,
   ProviderKeyDAO: Symbol('ProviderKeyDAO') as Token<() => Promise<ProviderKeyDAO>>,
-  CodexOAuthSessionDAO: Symbol('CodexOAuthSessionDAO') as Token<() => Promise<CodexOAuthSessionDAO>>,
+  CodexDeviceSessionDAO: Symbol('CodexDeviceSessionDAO') as Token<() => Promise<CodexDeviceSessionDAO>>,
   UsageLedgerDAO: Symbol('UsageLedgerDAO') as Token<() => Promise<UsageLedgerDAO>>,
   AccessAuthService: Symbol('AccessAuthService') as Token<AccessAuthService>,
   CodexOAuthService: Symbol('CodexOAuthService') as Token<CodexOAuthService>,

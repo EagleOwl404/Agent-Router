@@ -74,9 +74,9 @@ class CodexTokenRefreshTask extends BaseScheduledTask {
       .catch(() => ({ refreshed: 0, revoked: 0 }));
     if (refreshed > 0) logger.info(`Refreshed ${refreshed} Codex OAuth tokens`);
     if (revoked > 0) logger.info(`${revoked} Codex OAuth keys need reconnection`);
-    const sessionDAO = await scope.get(Tokens.CodexOAuthSessionDAO)();
+    const sessionDAO = await scope.get(Tokens.CodexDeviceSessionDAO)();
     const pruned = await sessionDAO.deleteExpiredOrConsumed(TimestampUtil.getCurrentUnixTimestampInSeconds(), 500).catch(() => 0);
-    if (pruned > 0) logger.info(`Pruned ${pruned} Codex OAuth sessions`);
+    if (pruned > 0) logger.info(`Pruned ${pruned} Codex device sessions`);
   }
 }
 

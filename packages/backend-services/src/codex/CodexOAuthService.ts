@@ -1,55 +1,76 @@
-import { CodexOAuthSessionDAO, ProviderDAO, ProviderKeyDAO } from '@agent-router/backend-data/dao';
-import type { CodexOAuthSession } from '@agent-router/backend-data/dao';
+import { CodexDeviceSessionDAO, ProviderDAO, ProviderKeyDAO } from '@agent-router/backend-data/dao';
 import type { D1Queryable } from '@agent-router/backend-data/utils';
-import { BadRequestError, NotFoundError } from '@agent-router/backend-errors';
+import { BadRequestError, NotFoundError, OAuth2TokenNonRetryableError, OAuth2TokenRetryableError } from '@agent-router/backend-errors';
 import { AppConfiguration } from '@agent-router/backend-runtime/config';
 import type { ProviderKeyMetadata } from '@agent-router/shared';
-import { CryptoUtil, TimestampUtil, UUIDUtil } from '@agent-router/shared/utils';
+import { TimestampUtil, UUIDUtil } from '@agent-router/shared/utils';
 import { KeyCrypto } from '../provider/KeyCrypto';
 import { CodexOAuthClient } from './CodexOAuthClient';
 
 interface CodexOAuthServiceEnv {
   DB: D1Queryable;
-  CODEX_OAUTH_STATE_EXPIRY_MINUTES?: string;
   AES_ENCRYPTION_KEY_SECRET?: { get(): Promise<string> };
 }
 
 interface CodexOAuthServiceDeps {
   providerDAO?: () => Promise<ProviderDAO>;
   providerKeyDAO?: () => Promise<ProviderKeyDAO>;
-  sessionDAO?: () => Promise<CodexOAuthSessionDAO>;
+  deviceSessionDAO?: () => Promise<CodexDeviceSessionDAO>;
   masterKey?: () => Promise<string>;
   config?: AppConfiguration;
   fetchImpl?: typeof fetch;
 }
 
-interface CodexAuthorizationResult {
-  keyId: string;
-  authorizationUrl: string;
-  redirectUri: string;
+interface CodexDeviceStart {
+  userCode: string;
+  verificationUrl: string;
   expiresAt: number;
+  pollIntervalSeconds: number;
 }
 
-async function codeChallengeFor(verifier: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
-  return CryptoUtil.toBase64Url(new Uint8Array(digest));
+type CodexDeviceStatus =
+  | { status: 'pending'; expiresAt: number; pollIntervalSeconds: number }
+  | { status: 'connected'; accountId: string | null }
+  | { status: 'expired' }
+  | { status: 'failed'; message: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
- * Resolve the public OAuth callback URI for a Codex key.
+ * Extracts a refresh token from pasted credentials.
  *
- * Prefers the configured `SITE_URL` (exact public origin) so custom-domain
- * deployments do not end up with a `workers.dev` (or vice versa)
- * `redirect_uri` that OpenAI rejects. Falls back to the request origin.
+ * Accepts a bare token string or a JSON blob in any of the shapes written by
+ * the Codex app (`~/.codex/auth.json`: `{tokens: {refresh_token}}`) and
+ * OpenCode's Codex plugin (`{refresh}` / `{refresh_token}`).
  */
-function resolveCodexCallbackUri(siteUrl: string, requestOrigin: string, keyId: string): string {
-  let base = requestOrigin;
-  const trimmed = siteUrl.trim();
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-    base = trimmed;
-    while (base.endsWith('/')) base = base.slice(0, -1);
-  }
-  return `${base}/api/codex/callback/${keyId}`;
+function extractRefreshToken(input: { refreshToken?: unknown; authJson?: unknown }): string | null {
+  const fromValue = (value: unknown): string | null => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      if (trimmed.startsWith('{')) {
+        try {
+          return fromValue(JSON.parse(trimmed) as unknown);
+        } catch {
+          return null;
+        }
+      }
+      return trimmed;
+    }
+    if (!isRecord(value)) return null;
+    for (const key of ['refresh_token', 'refresh']) {
+      const direct = fromValue(value[key]);
+      if (direct) return direct;
+    }
+    for (const key of ['tokens', 'credentials', 'auth']) {
+      const nested = fromValue(value[key]);
+      if (nested) return nested;
+    }
+    return null;
+  };
+  return fromValue(input.refreshToken) ?? fromValue(input.authJson);
 }
 
 class CodexOAuthService {
@@ -69,7 +90,7 @@ class CodexOAuthService {
     this.deps = {
       providerDAO: () => Promise.resolve(new ProviderDAO(env.DB)),
       providerKeyDAO: () => Promise.resolve(new ProviderKeyDAO(env.DB)),
-      sessionDAO: () => Promise.resolve(new CodexOAuthSessionDAO(env.DB)),
+      deviceSessionDAO: () => Promise.resolve(new CodexDeviceSessionDAO(env.DB)),
       masterKey,
       config,
       fetchImpl: deps.fetchImpl ?? fetch,
@@ -119,69 +140,132 @@ class CodexOAuthService {
     return created;
   }
 
-  public async createAuthorization(
-    providerId: string,
-    keyId: string,
-    userEmail: string,
-    redirectUri: string,
-  ): Promise<CodexAuthorizationResult> {
+  /**
+   * Starts a device-code authorization for a Codex key.
+   *
+   * Returns the short code the user enters at the verification URL.
+   * The browser never touches this flow, so no redirect_uri is involved.
+   */
+  public async startDeviceAuthorization(providerId: string, keyId: string, userEmail: string): Promise<CodexDeviceStart> {
     const normalized = userEmail.toLowerCase();
     await this.requireCodexKey(providerId, keyId, normalized);
-    if (!redirectUri || !/^https?:\/\//.test(redirectUri)) throw new BadRequestError('redirectUri must be an http(s) URL');
-    const state = CryptoUtil.randomBase64Url(32);
-    const codeVerifier = CryptoUtil.randomBase64Url(64);
-    const [codeChallenge, stateHash] = await Promise.all([codeChallengeFor(codeVerifier), CryptoUtil.sha256Hex(state)]);
+    const device = await CodexOAuthClient.requestDeviceCode(this.deps.fetchImpl);
     const now = TimestampUtil.getCurrentUnixTimestampInSeconds();
-    const expiresAt = TimestampUtil.addMinutes(now, this.deps.config.getCodexOAuthStateExpiryMinutes());
-    const sessionDAO = await this.deps.sessionDAO();
+    const expiresAt = Math.floor(device.expiresAtMs / 1000);
+    const sessionDAO = await this.deps.deviceSessionDAO();
+    await sessionDAO.deleteByKey(keyId).catch(() => undefined);
     await sessionDAO.create({
-      sessionId: UUIDUtil.getRandomUUID(),
+      deviceAuthId: device.deviceAuthId,
       providerKeyId: keyId,
       userEmail: normalized,
-      stateHash,
-      codeVerifier,
-      redirectUri,
+      userCode: device.userCode,
+      verificationUrl: CodexOAuthClient.deviceVerificationUrl,
+      pollIntervalSeconds: device.pollIntervalSeconds,
       now,
       expiresAt,
     });
     return {
-      keyId,
-      authorizationUrl: CodexOAuthClient.buildAuthorizationUrl({ redirectUri, state, codeChallenge }),
-      redirectUri,
+      userCode: device.userCode,
+      verificationUrl: CodexOAuthClient.deviceVerificationUrl,
       expiresAt,
+      pollIntervalSeconds: device.pollIntervalSeconds,
     };
   }
 
-  public async completeCallback(keyId: string, code: string, state: string): Promise<{ accountId: string | null }> {
-    if (!code) throw new BadRequestError('OAuth callback is missing code');
-    if (!state) throw new BadRequestError('OAuth callback is missing state');
+  /**
+   * Performs a single device-authorization poll.
+   *
+   * Transient upstream failures stay `pending` so the frontend keeps polling;
+   * only approval, expiry, or a terminal error ends the flow.
+   */
+  public async pollDeviceAuthorization(providerId: string, keyId: string, userEmail: string): Promise<CodexDeviceStatus> {
+    const normalized = userEmail.toLowerCase();
+    const { keyDAO } = await this.requireCodexKey(providerId, keyId, normalized);
     const now = TimestampUtil.getCurrentUnixTimestampInSeconds();
-    const sessionDAO = await this.deps.sessionDAO();
-    const stateHash = await CryptoUtil.sha256Hex(state);
-    const session: CodexOAuthSession | null = await sessionDAO.getActive(keyId, stateHash, now);
-    if (!session) throw new BadRequestError('Codex authorization session is invalid or expired');
-    const keyDAO = await this.deps.providerKeyDAO();
-    const key = await keyDAO.getById(keyId);
-    if (!key || (key.auth_type ?? 'static') !== 'codex_oauth') throw new NotFoundError('Provider key not found');
-    const tokens = await CodexOAuthClient.exchangeCode(
-      { code, codeVerifier: session.codeVerifier, redirectUri: session.redirectUri },
-      this.deps.fetchImpl,
-    );
+    const sessionDAO = await this.deps.deviceSessionDAO();
+    const session = await sessionDAO.getActiveByKey(keyId, now);
+    if (!session) return { status: 'expired' };
+    const pending = { status: 'pending' as const, expiresAt: session.expiresAt, pollIntervalSeconds: session.pollIntervalSeconds };
+    let poll: Awaited<ReturnType<typeof CodexOAuthClient.pollDeviceCode>>;
+    try {
+      poll = await CodexOAuthClient.pollDeviceCode({ deviceAuthId: session.deviceAuthId, userCode: session.userCode }, this.deps.fetchImpl);
+    } catch (error) {
+      if (error instanceof OAuth2TokenRetryableError) return pending;
+      await sessionDAO.consume(session.deviceAuthId, now).catch(() => undefined);
+      return { status: 'failed', message: error instanceof Error ? error.message : 'Codex authorization failed.' };
+    }
+    if (poll.status === 'pending') return pending;
+    try {
+      const tokens = await CodexOAuthClient.exchangeCode(
+        { code: poll.authorizationCode, codeVerifier: poll.codeVerifier, redirectUri: CodexOAuthClient.deviceRedirectUri },
+        this.deps.fetchImpl,
+      );
+      const masterKey = await this.deps.masterKey();
+      const [encryptedAccessToken, encryptedRefreshToken] = await Promise.all([
+        KeyCrypto.encrypt(tokens.accessToken, masterKey),
+        KeyCrypto.encrypt(tokens.refreshToken as string, masterKey),
+      ]);
+      const accessExpiresAt = now + (tokens.expiresIn ?? 864_000);
+      await keyDAO.updateOAuthConnected(keyId, {
+        encryptedAccessToken,
+        encryptedRefreshToken,
+        accountId: tokens.accountId,
+        accessExpiresAt,
+        now,
+      });
+    } catch (error) {
+      if (error instanceof OAuth2TokenRetryableError) return pending;
+      await sessionDAO.consume(session.deviceAuthId, now).catch(() => undefined);
+      return { status: 'failed', message: error instanceof Error ? error.message : 'Codex authorization failed.' };
+    }
+    await sessionDAO.consume(session.deviceAuthId, now).catch(() => undefined);
+    const updated = await keyDAO.getMetadataById(keyId);
+    return { status: 'connected', accountId: updated?.codexAccountId ?? null };
+  }
+
+  /**
+   * Imports a refresh token pasted from the Codex app or OpenCode.
+   *
+   * The token is validated with an immediate refresh (which also yields the
+   * account id), then stored encrypted like a device-flow connection.
+   */
+  public async importRefreshToken(
+    providerId: string,
+    keyId: string,
+    userEmail: string,
+    input: { refreshToken?: unknown; authJson?: unknown },
+  ): Promise<ProviderKeyMetadata> {
+    const normalized = userEmail.toLowerCase();
+    const { keyDAO } = await this.requireCodexKey(providerId, keyId, normalized);
+    const pasted = extractRefreshToken(input);
+    if (!pasted) throw new BadRequestError('No refresh token found. Paste the token or the full auth JSON.');
+    let refreshed: Awaited<ReturnType<typeof CodexOAuthClient.refreshAccessToken>>;
+    try {
+      refreshed = await CodexOAuthClient.refreshAccessToken({ refreshToken: pasted }, this.deps.fetchImpl);
+    } catch (error) {
+      if (error instanceof OAuth2TokenNonRetryableError) {
+        throw new BadRequestError('The pasted token was rejected. Sign in again and paste a fresh token.');
+      }
+      throw error;
+    }
+    const now = TimestampUtil.getCurrentUnixTimestampInSeconds();
     const masterKey = await this.deps.masterKey();
     const [encryptedAccessToken, encryptedRefreshToken] = await Promise.all([
-      KeyCrypto.encrypt(tokens.accessToken, masterKey),
-      KeyCrypto.encrypt(tokens.refreshToken as string, masterKey),
+      KeyCrypto.encrypt(refreshed.accessToken, masterKey),
+      KeyCrypto.encrypt(refreshed.refreshToken ?? pasted, masterKey),
     ]);
-    const accessExpiresAt = now + (tokens.expiresIn ?? 864_000);
     await keyDAO.updateOAuthConnected(keyId, {
       encryptedAccessToken,
       encryptedRefreshToken,
-      accountId: tokens.accountId,
-      accessExpiresAt,
+      accountId: refreshed.accountId,
+      accessExpiresAt: now + (refreshed.expiresIn ?? 864_000),
       now,
     });
-    await sessionDAO.consume(session.sessionId, now).catch(() => undefined);
-    return { accountId: tokens.accountId };
+    const sessionDAO = await this.deps.deviceSessionDAO();
+    await sessionDAO.deleteByKey(keyId).catch(() => undefined);
+    const updated = await keyDAO.getMetadataById(keyId);
+    if (!updated) throw new NotFoundError('Provider key not found');
+    return updated;
   }
 
   public async disconnect(providerId: string, keyId: string, userEmail: string): Promise<ProviderKeyMetadata> {
@@ -199,6 +283,8 @@ class CodexOAuthService {
     }
     const now = TimestampUtil.getCurrentUnixTimestampInSeconds();
     await keyDAO.clearOAuth(keyId, now);
+    const sessionDAO = await this.deps.deviceSessionDAO();
+    await sessionDAO.deleteByKey(keyId).catch(() => undefined);
     const updated = await keyDAO.getMetadataById(keyId);
     if (!updated) throw new NotFoundError('Provider key not found');
     return updated;
@@ -213,5 +299,5 @@ class CodexOAuthService {
   }
 }
 
-export { CodexOAuthService, resolveCodexCallbackUri };
-export type { CodexOAuthServiceDeps, CodexOAuthServiceEnv, CodexAuthorizationResult };
+export { CodexOAuthService };
+export type { CodexOAuthServiceDeps, CodexOAuthServiceEnv, CodexDeviceStart, CodexDeviceStatus };

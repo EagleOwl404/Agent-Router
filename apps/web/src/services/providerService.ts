@@ -57,19 +57,33 @@ export async function deleteProviderKey(providerId: string, keyId: string): Prom
   await apiDelete<{ ok: boolean }>(`/user/providers/${providerId}/keys/${keyId}`);
 }
 
-export interface CodexAuthorization {
-  keyId: string;
-  authorizationUrl: string;
-  redirectUri: string;
+export interface CodexDeviceStart {
+  userCode: string;
+  verificationUrl: string;
   expiresAt: number;
+  pollIntervalSeconds: number;
 }
+
+export type CodexDeviceStatus =
+  | { status: 'pending'; expiresAt: number; pollIntervalSeconds: number }
+  | { status: 'connected'; accountId: string | null }
+  | { status: 'expired' }
+  | { status: 'failed'; message: string };
 
 export async function createCodexKey(providerId: string, input: { name: string; priority?: number }): Promise<ProviderKey> {
   return apiPost<ProviderKey>(`/user/providers/${providerId}/keys/codex`, input);
 }
 
-export async function authorizeCodexKey(providerId: string, keyId: string): Promise<CodexAuthorization> {
-  return apiPost<CodexAuthorization>(`/user/providers/${providerId}/keys/${keyId}/codex/authorize`, {});
+export async function startCodexDevice(providerId: string, keyId: string): Promise<CodexDeviceStart> {
+  return apiPost<CodexDeviceStart>(`/user/providers/${providerId}/keys/${keyId}/codex/device/start`, {});
+}
+
+export async function getCodexDeviceStatus(providerId: string, keyId: string): Promise<CodexDeviceStatus> {
+  return apiGet<CodexDeviceStatus>(`/user/providers/${providerId}/keys/${keyId}/codex/device/status`);
+}
+
+export async function importCodexToken(providerId: string, keyId: string, pasted: string): Promise<ProviderKey> {
+  return apiPost<ProviderKey>(`/user/providers/${providerId}/keys/${keyId}/codex/token`, { authJson: pasted });
 }
 
 export async function disconnectCodexKey(providerId: string, keyId: string): Promise<ProviderKey> {

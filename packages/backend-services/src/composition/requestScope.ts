@@ -1,4 +1,4 @@
-import { CodexOAuthSessionDAO, GatewayKeyDAO, ProviderDAO, ProviderKeyDAO, UsageLedgerDAO, UserDAO } from '@agent-router/backend-data/dao';
+import { CodexDeviceSessionDAO, GatewayKeyDAO, ProviderDAO, ProviderKeyDAO, UsageLedgerDAO, UserDAO } from '@agent-router/backend-data/dao';
 import type { D1Queryable } from '@agent-router/backend-data/utils';
 import { Container, memoizeAsync } from '@agent-router/backend-runtime/di';
 import type { Token } from '@agent-router/backend-runtime/di';
@@ -39,7 +39,7 @@ function createRequestScope(env: RequestScopeEnv): Container {
     ['GatewayKeyDAO', () => Promise.resolve(new GatewayKeyDAO(env.DB))],
     ['ProviderDAO', () => Promise.resolve(new ProviderDAO(env.DB))],
     ['ProviderKeyDAO', () => Promise.resolve(new ProviderKeyDAO(env.DB))],
-    ['CodexOAuthSessionDAO', () => Promise.resolve(new CodexOAuthSessionDAO(env.DB))],
+    ['CodexDeviceSessionDAO', () => Promise.resolve(new CodexDeviceSessionDAO(env.DB))],
     ['UsageLedgerDAO', () => Promise.resolve(new UsageLedgerDAO(env.DB))],
   ];
   const daoFactories = {} as Record<string, () => Promise<unknown>>;
@@ -54,7 +54,7 @@ function createRequestScope(env: RequestScopeEnv): Container {
   const gatewayKeyDAO = getDao<GatewayKeyDAO>('GatewayKeyDAO');
   const providerDAO = getDao<ProviderDAO>('ProviderDAO');
   const providerKeyDAO = getDao<ProviderKeyDAO>('ProviderKeyDAO');
-  const codexSessionDAO = getDao<CodexOAuthSessionDAO>('CodexOAuthSessionDAO');
+  const codexSessionDAO = getDao<CodexDeviceSessionDAO>('CodexDeviceSessionDAO');
   const usageDAO = getDao<UsageLedgerDAO>('UsageLedgerDAO');
 
   const config = AppConfiguration.fromEnv(env);
@@ -68,22 +68,22 @@ function createRequestScope(env: RequestScopeEnv): Container {
   scope.bind(Tokens.UserService, () => new UserService(env as never, { userDAO }));
   scope.bind(Tokens.GatewayKeyService, () => new GatewayKeyService(env as never, { gatewayKeyDAO, userDAO, config }));
   scope.bind(Tokens.ProviderService, () => new ProviderService(env as never, { providerDAO, config }));
-  scope.bind(Tokens.ProviderKeyService, () => new ProviderKeyService(env as never, { providerDAO, providerKeyDAO, masterKey: resolveMasterKey, config }));
+  scope.bind(
+    Tokens.ProviderKeyService,
+    () => new ProviderKeyService(env as never, { providerDAO, providerKeyDAO, masterKey: resolveMasterKey, config }),
+  );
   scope.bind(
     Tokens.CodexOAuthService,
     () =>
       new CodexOAuthService(env as never, {
         providerDAO,
         providerKeyDAO,
-        sessionDAO: codexSessionDAO,
+        deviceSessionDAO: codexSessionDAO,
         masterKey: resolveMasterKey,
         config,
       }),
   );
-  scope.bind(
-    Tokens.CodexTokenService,
-    () => new CodexTokenService(env as never, { providerKeyDAO, masterKey: resolveMasterKey, config }),
-  );
+  scope.bind(Tokens.CodexTokenService, () => new CodexTokenService(env as never, { providerKeyDAO, masterKey: resolveMasterKey, config }));
   scope.bind(
     Tokens.RouterService,
     () =>

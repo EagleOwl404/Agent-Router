@@ -35,14 +35,30 @@
   },
   "dashboard": {
     "title": "Dashboard",
-    "description": "Route OpenAI, Anthropic, And Gemini Through One Gateway."
+    "description": "Route OpenAI, Anthropic, Gemini, And ChatGPT Codex Through One Gateway.",
+    "codexTitle": "ChatGPT Codex",
+    "codexDescription": "Connect With Your ChatGPT Account Via OAuth. No API Key Needed.",
+    "codexLink": "Connect Codex →"
   },
   "providers": {
     "title": "Providers",
     "description": "Pool Multiple Upstream Keys Per Provider. Failover Is Automatic.",
     "newProvider": "New Provider",
     "noProviders": "No Providers Yet. Create One To Get Started.",
-    "addKey": "Add Key"
+    "addKey": "Add Key",
+    "codexKindOption": "OpenAI Codex (OAuth)",
+    "addCodexKey": "Add Codex Key",
+    "connectWithOpenAI": "Connect With OpenAI",
+    "reconnectCodex": "Reconnect",
+    "notConnected": "Not Connected",
+    "codexConnected": "Codex Account Connected.",
+    "codexAuthFailed": "Codex Authorization Failed.",
+    "codexKeyAdded": "Codex Key Added. Connect It With OpenAI.",
+    "codexKeyAddFailed": "Failed To Add Key.",
+    "codexRedirecting": "Redirecting To OpenAI To Complete Sign-In…",
+    "codexStartFailed": "Failed To Start Codex Authorization.",
+    "codexDisconnected": "Codex Disconnected.",
+    "codexHint": "To Use ChatGPT OAuth Instead Of An API Key, Create An OpenAI Codex (OAuth) Provider, Add A Codex Key, Then Connect With OpenAI."
   },
   "keys": {
     "title": "Gateway Keys",

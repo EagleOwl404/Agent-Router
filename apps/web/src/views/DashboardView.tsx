@@ -1,14 +1,19 @@
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { AppPage } from '../components/layout/AppPage';
 import { PageHeaderCard } from '../components/layout/PageHeaderCard';
 import { Card, CardHeader, CardTitle } from '../components/ui/Card';
 import { ReadOnlyField } from '../components/shared/ReadOnlyField';
 
 export function DashboardView(_props: { showNotice: (type: 'success' | 'error', text: string) => void }) {
+  const { t } = useTranslation();
   const origin = globalThis.location?.origin ?? '';
   return (
     <AppPage>
-      <PageHeaderCard title="Dashboard" description="Route OpenAI, Anthropic, And Gemini Through One Gateway." />
+      <PageHeaderCard
+        title="Dashboard"
+        description={t('dashboard.description', 'Route OpenAI, Anthropic, Gemini, And ChatGPT Codex Through One Gateway.')}
+      />
 
       <Card>
         <CardHeader>
@@ -28,7 +33,7 @@ export function DashboardView(_props: { showNotice: (type: 'success' | 'error', 
         </div>
       </Card>
 
-      <div className="grid md:grid-cols-3 gap-4">
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardHeader>
             <CardTitle>Providers</CardTitle>
@@ -36,6 +41,17 @@ export function DashboardView(_props: { showNotice: (type: 'success' | 'error', 
           <p className="text-sm text-[var(--color-text-secondary)]">Add Upstream Providers And Pool Multiple Keys With Usage Caps.</p>
           <Link to="/providers" className="mt-3 inline-block text-sm text-[var(--color-accent)] hover:underline">
             Manage Providers →
+          </Link>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>{t('dashboard.codexTitle', 'ChatGPT Codex')}</CardTitle>
+          </CardHeader>
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            {t('dashboard.codexDescription', 'Connect With Your ChatGPT Account Via OAuth. No API Key Needed.')}
+          </p>
+          <Link to="/providers" className="mt-3 inline-block text-sm text-[var(--color-accent)] hover:underline">
+            {t('dashboard.codexLink', 'Connect Codex →')}
           </Link>
         </Card>
         <Card>

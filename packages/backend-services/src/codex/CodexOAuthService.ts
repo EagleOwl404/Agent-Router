@@ -35,6 +35,23 @@ async function codeChallengeFor(verifier: string): Promise<string> {
   return CryptoUtil.toBase64Url(new Uint8Array(digest));
 }
 
+/**
+ * Resolve the public OAuth callback URI for a Codex key.
+ *
+ * Prefers the configured `SITE_URL` (exact public origin) so custom-domain
+ * deployments do not end up with a `workers.dev` (or vice versa)
+ * `redirect_uri` that OpenAI rejects. Falls back to the request origin.
+ */
+function resolveCodexCallbackUri(siteUrl: string, requestOrigin: string, keyId: string): string {
+  let base = requestOrigin;
+  const trimmed = siteUrl.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    base = trimmed;
+    while (base.endsWith('/')) base = base.slice(0, -1);
+  }
+  return `${base}/api/codex/callback/${keyId}`;
+}
+
 class CodexOAuthService {
   private readonly deps: Required<CodexOAuthServiceDeps>;
 
@@ -196,5 +213,5 @@ class CodexOAuthService {
   }
 }
 
-export { CodexOAuthService };
+export { CodexOAuthService, resolveCodexCallbackUri };
 export type { CodexOAuthServiceDeps, CodexOAuthServiceEnv, CodexAuthorizationResult };

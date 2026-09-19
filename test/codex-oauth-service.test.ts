@@ -262,6 +262,19 @@ describe('CodexOAuthService refresh-token import', () => {
     await expect(svc.importRefreshToken('p1', 'k1', 'u@x.y', {})).rejects.toThrow(/No refresh token/i);
   });
 
+  it('backfills the account id from pasted auth JSON when refresh yields none', async () => {
+    const noAccount = deviceFetchStub({
+      oauthToken: { status: 200, body: { access_token: 'at-1', refresh_token: 'rt-1', expires_in: 3600 } },
+    });
+    const { svc, calls } = makeService({ fetchImpl: noAccount as unknown as typeof fetch });
+    const withAccount = JSON.stringify({ tokens: { refresh_token: 'rt-x', account_id: 'acc-pasted' } });
+    await svc.importRefreshToken('p1', 'k1', 'u@x.y', { authJson: withAccount });
+    // A bare token string must never be mistaken for an account id.
+    await svc.importRefreshToken('p1', 'k1', 'u@x.y', { refreshToken: 'rt-bare' });
+    expect((calls.connected[0] as { patch: { accountId: string | null } }).patch.accountId).toBe('acc-pasted');
+    expect((calls.connected[1] as { patch: { accountId: string | null } }).patch.accountId).toBeNull();
+  });
+
   it('rejects pasted tokens that OpenAI refuses', async () => {
     const fetchImpl = deviceFetchStub({ oauthToken: { status: 400, body: { error: 'invalid_grant' } } });
     const { svc, calls } = makeService({ fetchImpl: fetchImpl as unknown as typeof fetch });

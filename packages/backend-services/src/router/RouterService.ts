@@ -87,6 +87,10 @@ class RouterService {
       usageDAO: () => Promise.resolve(new UsageLedgerDAO(env.DB)),
       masterKey,
       config,
+      // Bound fetch: Workers native fetch is this-sensitive and throws
+      // "Illegal invocation" when a stored bare reference is called as a
+      // method (unicorn/no-unnecessary-global-this suppressed here).
+      // eslint-disable-next-line unicorn/no-unnecessary-global-this
       fetchImpl: deps.fetchImpl ?? globalThis.fetch.bind(globalThis),
       codexTokens: deps.codexTokens,
       ...deps,
@@ -131,6 +135,26 @@ class RouterService {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * Maps a non-retryable upstream body to a client-facing error. The Codex
+   * backend answers failed auth/edge checks with its login HTML page
+   * instead of JSON; surface reconnect guidance rather than markup.
+   */
+  private static toUpstreamError(kind: ProviderKind, status: number, bodyText: string, lastError: string): BadRequestError {
+    if (kind === 'OPENAI_CODEX' && /^\s*</.test(bodyText)) {
+      const text = bodyText
+        .replaceAll(/<[^<>]*>/g, ' ')
+        .replaceAll(/\s+/g, ' ')
+        .trim()
+        .slice(0, 200);
+      const message =
+        `Codex backend returned a login page (status ${status}). Reconnect the key or verify ChatGPT account access.` +
+        (text ? ` Page: ${text}` : '');
+      return new BadRequestError(message.slice(0, 300));
+    }
+    return new BadRequestError(lastError.slice(0, 300));
   }
 
   public async proxy(req: ProxyRequest): Promise<ProxySuccess> {
@@ -294,7 +318,7 @@ class RouterService {
             now: TimestampUtil.getCurrentUnixTimestampInSeconds(),
           })
           .catch(() => undefined);
-        const error = new BadRequestError(lastError.slice(0, 300));
+        const error = RouterService.toUpstreamError(req.providerKind, upstream.status, bodyText, lastError);
         (error as unknown as { statusCode?: number }).statusCode = upstream.status;
         throw error;
       } catch (error) {

@@ -14,6 +14,13 @@ const CODEX_DEVICE_VERIFICATION_URL = 'https://auth.openai.com/codex/device';
 const CODEX_DEVICE_REDIRECT_URI = 'https://auth.openai.com/deviceauth/callback';
 const CODEX_DEVICE_CODE_TTL_MS = 15 * 60 * 1000;
 
+// Workers native fetch is this-sensitive: storing bare `fetch` and calling it
+// as `fetchImpl(...)` throws "Illegal invocation" in production, so the
+// default keeps the global binding (unicorn/no-unnecessary-global-this
+// intentionally suppressed here).
+// eslint-disable-next-line unicorn/no-unnecessary-global-this
+const defaultFetch: typeof fetch = globalThis.fetch.bind(globalThis);
+
 interface CodexTokenResult {
   accessToken: string;
   refreshToken: string | null;
@@ -88,7 +95,7 @@ interface CodexTokenResponse {
   error_description?: string;
 }
 
-async function postTokenRequest(values: Record<string, string>, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<CodexTokenResponse> {
+async function postTokenRequest(values: Record<string, string>, fetchImpl: typeof fetch = defaultFetch): Promise<CodexTokenResponse> {
   let response: Response;
   try {
     response = await fetchImpl(CODEX_TOKEN_URL, {
@@ -127,7 +134,7 @@ function toTokenResult(data: CodexTokenResponse): CodexTokenResult {
 
 async function exchangeCode(
   input: { code: string; codeVerifier: string; redirectUri: string },
-  fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
+  fetchImpl: typeof fetch = defaultFetch,
 ): Promise<CodexTokenResult> {
   const data = await postTokenRequest(
     {
@@ -145,7 +152,7 @@ async function exchangeCode(
   return toTokenResult(data);
 }
 
-async function refreshAccessToken(input: { refreshToken: string }, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<CodexTokenResult> {
+async function refreshAccessToken(input: { refreshToken: string }, fetchImpl: typeof fetch = defaultFetch): Promise<CodexTokenResult> {
   const data = await postTokenRequest(
     {
       grant_type: 'refresh_token',
@@ -162,7 +169,7 @@ async function refreshAccessToken(input: { refreshToken: string }, fetchImpl: ty
   return toTokenResult(data);
 }
 
-async function revokeRefreshToken(input: { refreshToken: string }, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<void> {
+async function revokeRefreshToken(input: { refreshToken: string }, fetchImpl: typeof fetch = defaultFetch): Promise<void> {
   try {
     await fetchImpl(CODEX_REVOKE_URL, {
       method: 'POST',
@@ -200,7 +207,7 @@ function normalizeExpiryMs(raw: string | undefined): number {
   return Number.isFinite(parsed) ? parsed : Date.now() + CODEX_DEVICE_CODE_TTL_MS;
 }
 
-async function requestDeviceCode(fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<CodexDeviceCode> {
+async function requestDeviceCode(fetchImpl: typeof fetch = defaultFetch): Promise<CodexDeviceCode> {
   let response: Response;
   try {
     response = await fetchImpl(CODEX_DEVICE_USERCODE_URL, {
@@ -234,7 +241,7 @@ async function requestDeviceCode(fetchImpl: typeof fetch = globalThis.fetch.bind
 
 async function pollDeviceCode(
   input: { deviceAuthId: string; userCode: string },
-  fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
+  fetchImpl: typeof fetch = defaultFetch,
 ): Promise<CodexDevicePoll> {
   let response: Response;
   try {

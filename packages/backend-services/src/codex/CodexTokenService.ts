@@ -46,6 +46,8 @@ class CodexTokenService {
       providerKeyDAO: () => Promise.resolve(new ProviderKeyDAO(env.DB)),
       masterKey,
       config,
+      // Bound fetch: Workers native fetch is this-sensitive (see CodexOAuthClient).
+      // eslint-disable-next-line unicorn/no-unnecessary-global-this
       fetchImpl: deps.fetchImpl ?? globalThis.fetch.bind(globalThis),
       ...deps,
     };

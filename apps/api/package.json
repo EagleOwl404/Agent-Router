@@ -1,0 +1,24 @@
+{
+  "name": "@agent-router/api",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agent-router/backend-data": "workspace:*",
+    "@agent-router/backend-errors": "workspace:*",
+    "@agent-router/backend-runtime": "workspace:*",
+    "@agent-router/backend-services": "workspace:*",
+    "@agent-router/background": "workspace:*",
+    "@agent-router/shared": "workspace:*",
+    "chanfana": "3.4.0",
+    "hono": "4.13.7",
+    "zod": "4.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.1",
+    "typescript": "6.0.3"
+  }
+}

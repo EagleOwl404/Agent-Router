@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AppPage } from '../components/layout/AppPage';
 import { PageHeaderCard } from '../components/layout/PageHeaderCard';
 import { Card, CardHeader, CardTitle } from '../components/ui/Card';
@@ -29,6 +30,7 @@ function usageLabel(key: ProviderKey): string {
 }
 
 export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | 'error', text: string) => void }) {
+  const { t } = useTranslation();
   const [providers, setProviders] = useState<Provider[]>([]);
   const [keysByProvider, setKeysByProvider] = useState<Record<string, ProviderKey[]>>({});
   const [kind, setKind] = useState('OPENAI');
@@ -66,9 +68,9 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
     const params = new URLSearchParams(globalThis.location.search);
     const status = params.get('codex');
     if (status === 'connected') {
-      showNotice('success', 'Codex Account Connected.');
+      showNotice('success', t('providers.codexConnected', 'Codex Account Connected.'));
     } else if (status === 'error') {
-      showNotice('error', params.get('message') || 'Codex Authorization Failed.');
+      showNotice('error', params.get('message') || t('providers.codexAuthFailed', 'Codex Authorization Failed.'));
     } else {
       return;
     }
@@ -77,6 +79,9 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
     params.delete('message');
     const query = params.toString();
     globalThis.history.replaceState(null, '', `${globalThis.location.pathname}${query ? `?${query}` : ''}`);
+    // The OAuth round-trip happened in this tab, so refresh key statuses now.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- post-OAuth return is the intended sync point
+    void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -131,26 +136,39 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
     try {
       await createCodexKey(providerId, { name });
       setKeyForm((prev) => ({ ...prev, [providerId]: { name: '', secret: '' } }));
-      showNotice('success', 'Codex Key Added. Connect It With OpenAI.');
+      showNotice('success', t('providers.codexKeyAdded', 'Codex Key Added. Connect It With OpenAI.'));
       await reload();
     } catch (error) {
-      showNotice('error', error instanceof Error ? error.message : 'Failed To Add Key.');
+      showNotice('error', error instanceof Error ? error.message : t('providers.codexKeyAddFailed', 'Failed To Add Key.'));
     }
   };
 
   const onConnectCodex = async (providerId: string, keyId: string): Promise<void> => {
     try {
       const result = await authorizeCodexKey(providerId, keyId);
-      globalThis.open(result.authorizationUrl, '_blank', 'noopener');
-      showNotice('success', 'Complete Sign-In With OpenAI, Then Return Here.');
+      // Same-tab redirect: the OAuth callback returns to this tab, so the
+      // ?codex= handler above can refresh statuses without manual reloads.
+      showNotice('success', t('providers.codexRedirecting', 'Redirecting To OpenAI To Complete Sign-In…'));
+      globalThis.location.assign(result.authorizationUrl);
     } catch (error) {
-      showNotice('error', error instanceof Error ? error.message : 'Failed To Start Codex Authorization.');
+      showNotice('error', error instanceof Error ? error.message : t('providers.codexStartFailed', 'Failed To Start Codex Authorization.'));
     }
   };
 
   return (
     <AppPage>
       <PageHeaderCard title="Providers" description="Pool Multiple Upstream Keys Per Provider. Failover Is Automatic." />
+
+      {!loading && providers.every((p) => p.kind !== 'OPENAI_CODEX') && (
+        <Card>
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            {t(
+              'providers.codexHint',
+              'To Use ChatGPT OAuth Instead Of An API Key, Create An OpenAI Codex (OAuth) Provider, Add A Codex Key, Then Connect With OpenAI.',
+            )}
+          </p>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -167,7 +185,7 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
             <option value="ANTHROPIC">Anthropic</option>
             <option value="GEMINI">Gemini</option>
             <option value="OPENAI_COMPAT">OpenAI Compatible</option>
-            <option value="OPENAI_CODEX">OpenAI Codex (OAuth)</option>
+            <option value="OPENAI_CODEX">{t('providers.codexKindOption', 'OpenAI Codex (OAuth)')}</option>
           </select>
           <Input
             value={name}
@@ -204,18 +222,24 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
                   <div key={k.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-border)] p-2">
                     <span className="text-sm font-medium">{k.name}</span>
                     <Badge>{k.oauthStatus ?? 'pending'}</Badge>
-                    <span className="text-xs text-[var(--color-text-muted)]">{k.codexAccountId ?? 'Not Connected'}</span>
+                    <span className="text-xs text-[var(--color-text-muted)]">
+                      {k.codexAccountId ?? t('providers.notConnected', 'Not Connected')}
+                    </span>
                     <span className="text-xs text-[var(--color-text-muted)]">{usageLabel(k)}</span>
                     {k.lastError && <span className="text-xs text-red-500 truncate max-w-xs">{k.lastError}</span>}
                     <span className="ml-auto flex gap-1">
                       <Button variant="primary" size="sm" onClick={() => void onConnectCodex(p.id, k.id)}>
-                        {k.oauthStatus === 'connected' ? 'Reconnect' : 'Connect With OpenAI'}
+                        {k.oauthStatus === 'connected'
+                          ? t('providers.reconnectCodex', 'Reconnect')
+                          : t('providers.connectWithOpenAI', 'Connect With OpenAI')}
                       </Button>
                       {k.oauthStatus === 'connected' && (
                         <Button
                           variant="secondary"
                           size="sm"
-                          onClick={() => runMutation(disconnectCodexKey(p.id, k.id), 'Codex Disconnected.')}
+                          onClick={() =>
+                            runMutation(disconnectCodexKey(p.id, k.id), t('providers.codexDisconnected', 'Codex Disconnected.'))
+                          }
                         >
                           Disconnect
                         </Button>
@@ -267,7 +291,7 @@ export function ProvidersView({ showNotice }: { showNotice: (type: 'success' | '
                 />
                 {p.kind === 'OPENAI_CODEX' ? (
                   <Button variant="primary" size="sm" onClick={() => void onAddCodexKey(p.id)}>
-                    Add Codex Key
+                    {t('providers.addCodexKey', 'Add Codex Key')}
                   </Button>
                 ) : (
                   <>

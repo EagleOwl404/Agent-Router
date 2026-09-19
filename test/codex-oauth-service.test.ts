@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CodexOAuthService } from '@agent-router/backend-services/codex';
+import { CodexOAuthService, resolveCodexCallbackUri } from '@agent-router/backend-services/codex';
 import { KeyCrypto } from '@agent-router/backend-services/provider';
 import { AppConfiguration } from '@agent-router/backend-runtime/config';
 import { CryptoUtil } from '@agent-router/shared/utils';
@@ -39,19 +39,41 @@ function row(overrides: Record<string, unknown> = {}) {
 
 function makeService(opts: { providerKind?: string; key?: Record<string, unknown> | null; fetchImpl?: typeof fetch } = {}) {
   const calls: Record<string, unknown[]> = { createOAuthKey: [], sessions: [], connected: [], consumed: [], cleared: [] };
-  const providerDAO = { getById: async () => ({ id: 'p1', userEmail: 'u@x.y', kind: opts.providerKind ?? 'OPENAI_CODEX', name: 'Codex', baseUrl: 'https://api.openai.com/v1', status: 'active', createdAt: 1, updatedAt: null }) };
+  const providerDAO = {
+    getById: async () => ({
+      id: 'p1',
+      userEmail: 'u@x.y',
+      kind: opts.providerKind ?? 'OPENAI_CODEX',
+      name: 'Codex',
+      baseUrl: 'https://api.openai.com/v1',
+      status: 'active',
+      createdAt: 1,
+      updatedAt: null,
+    }),
+  };
   const keyRow = opts.key === undefined ? row() : opts.key;
   const providerKeyDAO = {
     countByProvider: async () => 0,
     getById: async () => keyRow,
-    getMetadataById: async () => (keyRow ? { id: 'k1', providerId: 'p1', userEmail: 'u@x.y', authType: 'codex_oauth', oauthStatus: 'pending' } : null),
+    getMetadataById: async () =>
+      keyRow ? { id: 'k1', providerId: 'p1', userEmail: 'u@x.y', authType: 'codex_oauth', oauthStatus: 'pending' } : null,
     createOAuthKey: async (r: unknown) => void calls.createOAuthKey.push(r),
     updateOAuthConnected: async (id: string, patch: unknown) => void calls.connected.push({ id, patch }),
     clearOAuth: async (id: string) => void calls.cleared.push(id),
   };
   const sessionDAO = {
     create: async (r: unknown) => void calls.sessions.push(r),
-    getActive: async () => ({ sessionId: 's1', providerKeyId: 'k1', userEmail: 'u@x.y', stateHash: 'h', codeVerifier: 'verifier', redirectUri: 'https://gw/api/codex/callback/k1', createdAt: 1, expiresAt: 999, consumedAt: null }),
+    getActive: async () => ({
+      sessionId: 's1',
+      providerKeyId: 'k1',
+      userEmail: 'u@x.y',
+      stateHash: 'h',
+      codeVerifier: 'verifier',
+      redirectUri: 'https://gw/api/codex/callback/k1',
+      createdAt: 1,
+      expiresAt: 999,
+      consumedAt: null,
+    }),
     consume: async (id: string) => void calls.consumed.push(id),
   };
   const env = { DB: {} as never };
@@ -92,14 +114,14 @@ describe('CodexOAuthService', () => {
   });
 
   it('completes callbacks by storing encrypted tokens and consuming the session', async () => {
-    const fetchImpl = vi.fn(async () =>
-      tokenResponse({ access_token: 'at-1', refresh_token: 'rt-1', expires_in: 3600 }),
-    );
+    const fetchImpl = vi.fn(async () => tokenResponse({ access_token: 'at-1', refresh_token: 'rt-1', expires_in: 3600 }));
     const { svc, calls } = makeService({ fetchImpl: fetchImpl as unknown as typeof fetch });
     const result = await svc.completeCallback('k1', 'code-1', 'state-1');
     expect(result).toBeDefined();
     expect(calls.consumed).toEqual(['s1']);
-    const patch = (calls.connected[0] as { patch: { encryptedAccessToken: string; encryptedRefreshToken: string; accessExpiresAt: number } }).patch;
+    const patch = (
+      calls.connected[0] as { patch: { encryptedAccessToken: string; encryptedRefreshToken: string; accessExpiresAt: number } }
+    ).patch;
     expect(await KeyCrypto.decrypt(patch.encryptedAccessToken, MASTER)).toBe('at-1');
     expect(await KeyCrypto.decrypt(patch.encryptedRefreshToken, MASTER)).toBe('rt-1');
     expect(patch.accessExpiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
@@ -121,5 +143,26 @@ describe('CodexOAuthService', () => {
     await withRefresh.svc.disconnect('p1', 'k1', 'u@x.y');
     expect(revokeFetch).toHaveBeenCalled();
     expect(withRefresh.calls.cleared).toEqual(['k1']);
+  });
+});
+
+describe('resolveCodexCallbackUri', () => {
+  it('prefers the configured SITE_URL over the request origin', () => {
+    expect(resolveCodexCallbackUri('https://gw.example.com', 'https://agent-router.workers.dev', 'k1')).toBe(
+      'https://gw.example.com/api/codex/callback/k1',
+    );
+  });
+
+  it('trims trailing slashes from SITE_URL', () => {
+    expect(resolveCodexCallbackUri('https://gw.example.com///', 'https://agent-router.workers.dev', 'k1')).toBe(
+      'https://gw.example.com/api/codex/callback/k1',
+    );
+  });
+
+  it('falls back to the request origin when SITE_URL is empty or not http(s)', () => {
+    expect(resolveCodexCallbackUri('', 'https://agent-router.workers.dev', 'k1')).toBe(
+      'https://agent-router.workers.dev/api/codex/callback/k1',
+    );
+    expect(resolveCodexCallbackUri('not-a-url', 'http://localhost:8787', 'k1')).toBe('http://localhost:8787/api/codex/callback/k1');
   });
 });

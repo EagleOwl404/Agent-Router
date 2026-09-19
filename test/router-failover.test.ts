@@ -137,6 +137,26 @@ describe('RouterService failover', () => {
     ).rejects.toThrow(/exhausted/i);
   });
 
+  it('includes the upstream 429 detail when every key is rate limited', async () => {
+    const k1 = row('k1');
+    k1.encrypted_key = await enc('sk-1');
+    const fetchImpl = vi.fn(async () => jsonResponse(429, { error: { message: 'Account quota hit' } }));
+    const { svc } = makeService([k1], fetchImpl as unknown as typeof fetch);
+    await expect(
+      svc.proxy({
+        userEmail: 'u@x.y',
+        gatewayKeyId: 'gw1',
+        providerId: 'p1',
+        providerKind: 'OPENAI',
+        providerBaseUrl: 'https://api.openai.com/v1',
+        upstreamPath: '/chat/completions',
+        upstreamBody: { model: 'gpt-4o', messages: [] },
+        upstreamModel: 'gpt-4o',
+        bodyBytes: 10,
+      }),
+    ).rejects.toThrow(/Account quota hit/);
+  });
+
   it('surfaces non-retryable 4xx without failover', async () => {
     const k1 = row('k1');
     k1.encrypted_key = await enc('sk-1');

@@ -40,9 +40,23 @@ function buildUpstreamCall(
   };
 }
 
+// Codex OAuth (ChatGPT subscription) tokens are honored by the Codex
+// backend, not the OpenAI platform API. Opencode rewrites both
+// /v1/responses and /chat/completions to this endpoint.
+const CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
+// Rows created before the backend correction pin the platform endpoint;
+// keep calling the Codex backend for them instead of 429ing upstream.
+const LEGACY_CODEX_BASE_URLS = new Set(['https://api.openai.com/v1', 'https://api.openai.com/v1/']);
+
+function resolveCodexBase(baseUrl: string | null): string {
+  const trimmed = (baseUrl ?? '').trim().replace(/\/$/, '');
+  if (!trimmed || LEGACY_CODEX_BASE_URLS.has(trimmed) || LEGACY_CODEX_BASE_URLS.has(`${trimmed}/`)) return CODEX_BASE_URL;
+  return trimmed;
+}
+
 function buildCodexCall(baseUrl: string | null, path: string, accessToken: string, accountId: string | null, body: unknown): UpstreamCall {
   const payload = JSON.stringify(body ?? {});
-  const base = (baseUrl ?? 'https://api.openai.com/v1').replace(/\/$/, '');
+  const base = resolveCodexBase(baseUrl);
   const headers: Record<string, string> = { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` };
   if (accountId) headers['ChatGPT-Account-Id'] = accountId;
   return {
@@ -86,5 +100,5 @@ function isRetryableStatus(status: number): boolean {
   return RETRYABLE_STATUSES.has(status);
 }
 
-export { buildUpstreamCall, buildCodexCall, parseUsage, isRetryableStatus };
+export { buildUpstreamCall, buildCodexCall, parseUsage, isRetryableStatus, CODEX_BASE_URL };
 export type { UpstreamCall, ParsedUsage };

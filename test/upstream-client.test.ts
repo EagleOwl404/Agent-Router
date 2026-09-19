@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCodexCall, buildUpstreamCall, extractCodexCompletedResponse, isRetryableStatus, parseUsage } from '@agent-router/backend-services/router';
+import { buildCodexCall, buildUpstreamCall, extractCodexCompletedResponse, extractHtmlPageText, isRetryableStatus, parseUsage } from '@agent-router/backend-services/router';
 
 describe('UpstreamClient', () => {
   it('builds OpenAI bearer calls', () => {
@@ -88,6 +88,11 @@ describe('UpstreamClient', () => {
     expect(JSON.parse(extractCodexCompletedResponse(deltas) as string)).toMatchObject({
       output: [{ content: [{ text: 'hey' }] }],
     });
+  });
+
+  it('extracts page copy from HTML errors, dropping style content', () => {
+    const html = '<html><head><style>body{color:red}</style></head><body><h1>Just a moment</h1><p>Verify you are human</p></body></html>';
+    expect(extractHtmlPageText(html)).toBe('Just a moment Verify you are human');
   });
 
   it('parses Codex usage from input/output tokens', () => {

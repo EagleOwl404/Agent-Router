@@ -6,7 +6,7 @@ import type { ProviderKind } from '@agent-router/shared';
 import { TimestampUtil, UUIDUtil } from '@agent-router/shared/utils';
 import { AppConfiguration } from '@agent-router/backend-runtime/config';
 import { KeyCrypto } from '../provider/KeyCrypto';
-import { buildCodexCall, buildUpstreamCall, extractCodexCompletedResponse, isRetryableStatus, parseUsage } from './UpstreamClient';
+import { buildCodexCall, buildUpstreamCall, extractCodexCompletedResponse, extractHtmlPageText, isRetryableStatus, parseUsage } from './UpstreamClient';
 import type { UpstreamCall } from './UpstreamClient';
 
 interface RouterServiceEnv {
@@ -141,19 +141,22 @@ class RouterService {
   /**
    * Maps a non-retryable upstream body to a client-facing error. The Codex
    * backend answers failed auth/edge checks with its login HTML page
-   * instead of JSON; surface reconnect guidance rather than markup.
+   * instead of JSON; surface the page copy plus whether an account was even
+   * linked, rather than markup.
    */
-  private static toUpstreamError(kind: ProviderKind, status: number, bodyText: string, lastError: string): BadRequestError {
+  private static toUpstreamError(
+    kind: ProviderKind,
+    status: number,
+    bodyText: string,
+    lastError: string,
+    accountRouted: boolean,
+  ): BadRequestError {
     if (kind === 'OPENAI_CODEX' && /^\s*</.test(bodyText)) {
-      const text = bodyText
-        .replaceAll(/<[^<>]*>/g, ' ')
-        .replaceAll(/\s+/g, ' ')
-        .trim()
-        .slice(0, 200);
-      const message =
-        `Codex backend returned a login page (status ${status}). Reconnect the key or verify ChatGPT account access.` +
-        (text ? ` Page: ${text}` : '');
-      return new BadRequestError(message.slice(0, 300));
+      const text = extractHtmlPageText(bodyText);
+      const message = accountRouted
+        ? `Codex backend returned a login page (status ${status}) even with a linked account — likely an access challenge from this network.`
+        : `Codex backend returned a login page (status ${status}) and no ChatGPT account is linked to this key. Re-import the full auth JSON so the account id is stored, then retry.`;
+      return new BadRequestError(`${message}${text ? ` Page: ${text}` : ''}`.slice(0, 400));
     }
     return new BadRequestError(lastError.slice(0, 300));
   }
@@ -192,18 +195,21 @@ class RouterService {
     const usageDAO = await this.deps.usageDAO();
     let lastError = 'Upstream request failed';
     let lastStatus = 502;
+    let lastAccountRouted = false;
     const attempts = Math.min(maxAttempts, usable.length);
     for (let i = 0; i < attempts; i += 1) {
       const candidate = usable[i];
       const startedMs = Date.now();
       try {
         let call = await this.buildCallForCandidate(candidate, req, masterKey);
+        lastAccountRouted = 'ChatGPT-Account-Id' in call.headers;
         let upstream = await this.fetchWithTimeout(call, timeoutMs);
         // OAuth access tokens can be revoked server-side before JWT expiry:
         // force one refresh-and-retry before treating the 401 as a key failure.
         if (upstream.status === 401 && this.isOAuthKey(candidate)) {
           try {
             call = await this.buildCallForCandidate(candidate, req, masterKey, true);
+            lastAccountRouted = 'ChatGPT-Account-Id' in call.headers;
             upstream = await this.fetchWithTimeout(call, timeoutMs);
           } catch (error) {
             const message = error instanceof Error ? error.message : 'Upstream request failed';
@@ -339,7 +345,7 @@ class RouterService {
             now: TimestampUtil.getCurrentUnixTimestampInSeconds(),
           })
           .catch(() => undefined);
-        const error = RouterService.toUpstreamError(req.providerKind, upstream.status, bodyText, lastError);
+        const error = RouterService.toUpstreamError(req.providerKind, upstream.status, bodyText, lastError, lastAccountRouted);
         (error as unknown as { statusCode?: number }).statusCode = upstream.status;
         throw error;
       } catch (error) {

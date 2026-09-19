@@ -71,6 +71,21 @@ function normalizeCodexBody(body: unknown): unknown {
 }
 
 /**
+ * Extracts human-readable text from an HTML error page (the Codex backend
+ * answers failed auth/edge checks with its login page instead of JSON).
+ * Script/style content is dropped so the result is page copy, not CSS.
+ */
+function extractHtmlPageText(html: string): string {
+  return html
+    .replaceAll(/<script[^<>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replaceAll(/<style[^<>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replaceAll(/<[^<>]*>/g, ' ')
+    .replaceAll(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300);
+}
+
+/**
  * Extracts the final response object from a Codex SSE stream (the
  * `response.completed` event payload) so non-streaming clients receive plain
  * JSON. The backend sometimes snapshots `output` empty, so output is rebuilt
@@ -169,5 +184,5 @@ function isRetryableStatus(status: number): boolean {
   return RETRYABLE_STATUSES.has(status);
 }
 
-export { buildUpstreamCall, buildCodexCall, parseUsage, isRetryableStatus, CODEX_BASE_URL, extractCodexCompletedResponse };
+export { buildUpstreamCall, buildCodexCall, parseUsage, isRetryableStatus, CODEX_BASE_URL, extractCodexCompletedResponse, extractHtmlPageText };
 export type { UpstreamCall, ParsedUsage };

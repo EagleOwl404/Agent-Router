@@ -133,6 +133,17 @@ describe('RouterService Codex OAuth', () => {
     expect(relayed.bodyText).toBe(sse);
   });
 
+  it('names access challenges when the login page arrives despite a linked account', async () => {
+    const k1 = row('k1', { encrypted_refresh_token: await enc('rt-1') });
+    const html = '<html><head><style>body{color:red}</style></head><body>Just a moment</body></html>';
+    const fetchImpl = vi.fn(async () => new Response(html, { status: 403, headers: { 'content-type': 'text/html' } }));
+    const codexTokens = { getAccessToken: vi.fn(async () => ({ accessToken: 'at-live', accountId: 'acc-1' })) };
+    const { svc } = makeService([k1], fetchImpl as unknown as typeof fetch, codexTokens);
+    await expect(svc.proxy({ ...proxyInput(), upstreamBody: { model: 'gpt-5', input: 'hi' } })).rejects.toThrow(
+      /even with a linked account.*Just a moment/i,
+    );
+  });
+
   it('refreshes once on 401 before failing over', async () => {
     const k1 = row('k1', { encrypted_refresh_token: await enc('rt-1') });
     const k2 = row('k2', { encrypted_refresh_token: await enc('rt-2') });

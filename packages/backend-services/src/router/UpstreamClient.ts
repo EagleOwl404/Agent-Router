@@ -57,7 +57,16 @@ function resolveCodexBase(baseUrl: string | null): string {
 function buildCodexCall(baseUrl: string | null, path: string, accessToken: string, accountId: string | null, body: unknown): UpstreamCall {
   const payload = JSON.stringify(body ?? {});
   const base = resolveCodexBase(baseUrl);
-  const headers: Record<string, string> = { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` };
+  // Required by the Codex backend: the Responses beta gate plus the CLI
+  // originator (same values sent by the official Codex CLI and the
+  // opencode Codex plugins). Without them the backend rejects calls with
+  // an HTML 400 instead of reaching the model.
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    authorization: `Bearer ${accessToken}`,
+    'OpenAI-Beta': 'responses=experimental',
+    originator: 'codex_cli_rs',
+  };
   if (accountId) headers['ChatGPT-Account-Id'] = accountId;
   return {
     url: `${base}${path.startsWith('/') ? path : `/${path}`}`,

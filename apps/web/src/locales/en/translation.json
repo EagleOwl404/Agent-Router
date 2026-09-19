@@ -1,0 +1,87 @@
+{
+  "header": {
+    "dashboard": "Dashboard",
+    "providers": "Providers",
+    "keys": "Gateway Keys",
+    "usage": "Usage",
+    "settings": "Settings"
+  },
+  "common": {
+    "cancel": "Cancel",
+    "close": "Close",
+    "confirm": "Confirm",
+    "copyToClipboard": "Copy To Clipboard",
+    "create": "Create",
+    "delete": "Delete",
+    "error": "Error",
+    "loadMore": "Load More",
+    "loading": "Loading…",
+    "refresh": "Refresh",
+    "remove": "Remove",
+    "revoke": "Revoke",
+    "saveChanges": "Save Changes",
+    "success": "Success"
+  },
+  "landing": {
+    "title": "One Gateway For Every Model",
+    "subtitle": "Manage Gateway Keys, Pool Multiple Upstream Keys Per Provider, And Fail Over Automatically On Rate Limits.",
+    "signIn": "Sign In With Cloudflare Access",
+    "keyPools": "Key Pools",
+    "keyPoolsDescription": "Add Multiple Upstream Keys Per Provider With Usage Caps.",
+    "failover": "Automatic Failover",
+    "failoverDescription": "429s And 5xx Retried On The Next Healthy Key Transparently.",
+    "gatewayKeys": "Gateway Keys",
+    "gatewayKeysDescription": "Clients Use One Bearer Key Across OpenAI, Anthropic, And Gemini."
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "description": "Route OpenAI, Anthropic, And Gemini Through One Gateway."
+  },
+  "providers": {
+    "title": "Providers",
+    "description": "Pool Multiple Upstream Keys Per Provider. Failover Is Automatic.",
+    "newProvider": "New Provider",
+    "noProviders": "No Providers Yet. Create One To Get Started.",
+    "addKey": "Add Key"
+  },
+  "keys": {
+    "title": "Gateway Keys",
+    "description": "Bearer Keys For Your Clients. Use As Authorization: Bearer ar_…",
+    "newKeyOnce": "New Key (Copy Once)",
+    "noKeys": "No Gateway Keys Yet."
+  },
+  "usage": {
+    "title": "Usage",
+    "description": "Last 30 Days Across All Providers And Keys.",
+    "totals": "Totals",
+    "recent": "Recent Requests",
+    "noRequests": "No Requests Yet."
+  },
+  "settings": {
+    "userSettings": "User Settings",
+    "profile": "Profile",
+    "preferences": "Preferences",
+    "language": "Language",
+    "languageDescription": "Choose Your Preferred Display Language.",
+    "selectLanguage": "Select Language",
+    "unknownLanguage": "Unknown",
+    "email": "Email",
+    "general": "General",
+    "username": "Username",
+    "usernamePlaceholder": "your-username",
+    "settingsUpdated": "Profile Settings Updated.",
+    "failedToUpdate": "Failed To Update Profile."
+  },
+  "unauthorized": {
+    "title": "Access Required",
+    "defaultMessage": "You Must Authenticate To Access This Page.",
+    "action": "Sign In With Cloudflare Access"
+  },
+  "errors": {
+    "signInToManage": "Sign In To Manage Settings.",
+    "pageNotFound": "Page Not Found",
+    "pageNotFoundDescription": "The Page You Requested Does Not Exist.",
+    "languageLoadFailed": "Unable To Load Language.",
+    "languageSaveFailed": "Unable To Save Language."
+  }
+}

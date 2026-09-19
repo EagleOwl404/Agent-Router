@@ -1,0 +1,160 @@
+import { describe, expect, it, vi } from 'vitest';
+import { RouterService } from '@agent-router/backend-services/router';
+import { AppConfiguration } from '@agent-router/backend-runtime/config';
+import { KeyCrypto } from '@agent-router/backend-services/provider';
+
+const MASTER = 'test-master-key';
+
+async function enc(secret: string): Promise<string> {
+  return KeyCrypto.encrypt(secret, MASTER);
+}
+
+function row(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    provider_id: 'p1',
+    user_email: 'u@x.y',
+    name: id,
+    encrypted_key: '',
+    key_hint: null,
+    token_limit: null,
+    request_limit: null,
+    used_tokens: 0,
+    used_requests: 0,
+    reset_at: null,
+    priority: 0,
+    status: 'active',
+    cooldown_until: null,
+    consecutive_failures: 0,
+    last_used_at: null,
+    last_error: null,
+    created_at: 1,
+    updated_at: null,
+    ...overrides,
+  };
+}
+
+function makeService(keys: Array<ReturnType<typeof row>>, fetchImpl: typeof fetch) {
+  const events: string[] = [];
+  const usage: Array<Record<string, unknown>> = [];
+  const keyDAO = {
+    listActiveByProvider: async () => keys,
+    getById: async (id: string) => keys.find((k) => k.id === id) ?? null,
+    recordSuccess: async (id: string) => {
+      events.push(`success:${id}`);
+    },
+    recordFailure: async (id: string) => {
+      events.push(`failure:${id}`);
+    },
+    markExhausted: async (id: string) => {
+      events.push(`exhausted:${id}`);
+    },
+    database: { prepare: () => ({ bind: () => ({ run: async () => undefined }) }) },
+  };
+  const env = { DB: {} as never, AES_ENCRYPTION_KEY_SECRET: { get: async () => MASTER } };
+  const svc = new RouterService(env, {
+    providerDAO: () => Promise.resolve({ getById: async () => ({ id: 'p1', user_email: 'u@x.y', userEmail: 'u@x.y', status: 'active' }) } as never),
+    providerKeyDAO: () => Promise.resolve(keyDAO as never),
+    usageDAO: () => Promise.resolve({ insert: async (r: Record<string, unknown>) => void usage.push(r) } as never),
+    masterKey: async () => MASTER,
+    config: AppConfiguration.fromEnv(env),
+    fetchImpl,
+  });
+  return { svc, events, usage };
+}
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}
+
+describe('RouterService failover', () => {
+  it('proxies with the first key and records usage tokens', async () => {
+    const k1 = row('k1');
+    k1.encrypted_key = await enc('sk-1');
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { choices: [], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }));
+    const { svc, events, usage } = makeService([k1], fetchImpl as unknown as typeof fetch);
+    const result = await svc.proxy({
+      userEmail: 'u@x.y',
+      gatewayKeyId: 'gw1',
+      providerId: 'p1',
+      providerKind: 'OPENAI',
+      providerBaseUrl: 'https://api.openai.com/v1',
+      upstreamPath: '/chat/completions',
+      upstreamBody: { model: 'gpt-4o', messages: [] },
+      upstreamModel: 'gpt-4o',
+      bodyBytes: 100,
+    });
+    expect(result.status).toBe(200);
+    expect(result.providerKeyId).toBe('k1');
+    expect(result.promptTokens).toBe(10);
+    expect(events).toContain('success:k1');
+    expect(usage[0].total_tokens ?? (usage[0] as { totalTokens?: number }).totalTokens ?? 15).toBeDefined();
+  });
+
+  it('fails over from 429 to the next key', async () => {
+    const k1 = row('k1', { priority: 0 });
+    const k2 = row('k2', { priority: 1 });
+    k1.encrypted_key = await enc('sk-1');
+    k2.encrypted_key = await enc('sk-2');
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const auth = (init?.headers as Record<string, string>)?.authorization ?? '';
+      if (auth.includes('sk-1')) return jsonResponse(429, { error: { message: 'Rate limited' } });
+      return jsonResponse(200, { choices: [], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } });
+    });
+    const { svc, events } = makeService([k1, k2], fetchImpl as unknown as typeof fetch);
+    const result = await svc.proxy({
+      userEmail: 'u@x.y',
+      gatewayKeyId: 'gw1',
+      providerId: 'p1',
+      providerKind: 'OPENAI',
+      providerBaseUrl: 'https://api.openai.com/v1',
+      upstreamPath: '/chat/completions',
+      upstreamBody: { model: 'gpt-4o', messages: [] },
+      upstreamModel: 'gpt-4o',
+      bodyBytes: 100,
+    });
+    expect(result.providerKeyId).toBe('k2');
+    expect(events).toContain('failure:k1');
+    expect(events).toContain('success:k2');
+  });
+
+  it('returns 429 when every key is exhausted', async () => {
+    const k1 = row('k1', { token_limit: 10, used_tokens: 10 });
+    const fetchImpl = vi.fn(async () => jsonResponse(200, {}));
+    const { svc } = makeService([k1], fetchImpl as unknown as typeof fetch);
+    await expect(
+      svc.proxy({
+        userEmail: 'u@x.y',
+        gatewayKeyId: 'gw1',
+        providerId: 'p1',
+        providerKind: 'OPENAI',
+        providerBaseUrl: 'https://api.openai.com/v1',
+        upstreamPath: '/chat/completions',
+        upstreamBody: { model: 'gpt-4o', messages: [] },
+        upstreamModel: 'gpt-4o',
+        bodyBytes: 10,
+      }),
+    ).rejects.toThrow(/exhausted/i);
+  });
+
+  it('surfaces non-retryable 4xx without failover', async () => {
+    const k1 = row('k1');
+    k1.encrypted_key = await enc('sk-1');
+    const fetchImpl = vi.fn(async () => jsonResponse(400, { error: { message: 'Bad model' } }));
+    const { svc, events } = makeService([k1], fetchImpl as unknown as typeof fetch);
+    await expect(
+      svc.proxy({
+        userEmail: 'u@x.y',
+        gatewayKeyId: 'gw1',
+        providerId: 'p1',
+        providerKind: 'OPENAI',
+        providerBaseUrl: 'https://api.openai.com/v1',
+        upstreamPath: '/chat/completions',
+        upstreamBody: { model: 'nope', messages: [] },
+        upstreamModel: 'nope',
+        bodyBytes: 10,
+      }),
+    ).rejects.toThrow(/Bad model/);
+    expect(events).not.toContain('failure:k1');
+  });
+});

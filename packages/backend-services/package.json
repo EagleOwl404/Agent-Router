@@ -1,0 +1,38 @@
+{
+  "name": "@agent-router/backend-services",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./auth": "./src/auth/index.ts",
+    "./auth/*": "./src/auth/*.ts",
+    "./user": "./src/user/index.ts",
+    "./user/*": "./src/user/*.ts",
+    "./gateway": "./src/gateway/index.ts",
+    "./gateway/*": "./src/gateway/*.ts",
+    "./provider": "./src/provider/index.ts",
+    "./provider/*": "./src/provider/*.ts",
+    "./router": "./src/router/index.ts",
+    "./router/*": "./src/router/*.ts",
+    "./usage": "./src/usage/index.ts",
+    "./usage/*": "./src/usage/*.ts",
+    "./composition": "./src/composition/index.ts",
+    "./composition/*": "./src/composition/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agent-router/backend-data": "workspace:*",
+    "@agent-router/backend-errors": "workspace:*",
+    "@agent-router/backend-runtime": "workspace:*",
+    "@agent-router/shared": "workspace:*",
+    "jose": "6.2.12"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.1",
+    "typescript": "6.0.3"
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agent-router",
+  "main": "apps/api/src/index.ts",
+  "compatibility_date": "2025-11-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "preview_urls": false,
+  "workers_dev": false,
+  "minify": true,
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true,
+      "persist": true,
+    },
+  },
+  "routes": [],
+  "placement": {
+    "mode": "off",
+  },
+  "assets": {
+    "directory": "./apps/web/dist/",
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CRON_TASKS",
+        "class_name": "CronTasksWorker",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1000000000",
+      "new_sqlite_classes": ["CronTasksWorker"],
+    },
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "agent-router-db",
+    },
+  ],
+  "triggers": {
+    "crons": ["*/10 * * * *"],
+  },
+  "vars": {
+    "ENVIRONMENT": "production",
+    "DEBUG_MODE": "false",
+    "SITE_URL": "",
+    "POLICY_AUD": "",
+    "TEAM_DOMAIN": "",
+    "MAX_PROVIDERS_PER_USER": "10",
+    "MAX_KEYS_PER_PROVIDER": "10",
+    "MAX_GATEWAY_KEYS_PER_USER": "10",
+    "MAX_GATEWAY_KEY_EXPIRY_DAYS": "365",
+    "PROXY_TIMEOUT_MS": "30000",
+    "PROXY_MAX_ATTEMPTS": "4",
+    "PROXY_MAX_BODY_BYTES": "1048576",
+    "KEY_COOLDOWN_BASE_MS": "60000",
+    "KEY_MAX_CONSECUTIVE_FAILURES": "10",
+    "USAGE_RETENTION_DAYS": "90",
+  },
+}

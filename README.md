@@ -1,6 +1,6 @@
 # Agent-Router
 
-OpenRouter-style LLM gateway on Cloudflare Workers + D1, scaffolded from the Edge-Git monorepo skeleton (`@agent-router/monorepo`, `pnpm@11.2.2`).
+OpenRouter-style LLM gateway on Cloudflare Workers + D1 (`@agent-router/monorepo`, `pnpm@11.2.2`).
 
 - **Gateway**: OpenAI-compatible `POST /v1/chat/completions`, `POST /v1/embeddings`, `GET /v1/models` + `POST /anthropic/v1/messages` + `POST /gemini/v1beta/models/<model>:generateContent`. Clients authenticate with per-user gateway keys (`Authorization: Bearer ar_…`, sha256 `agent-router-gw:` prefix). Model names route automatically (`gpt-*`→OpenAI, `claude-*`→Anthropic, `gemini-*`→Gemini); `x-provider-id` pins a provider.
 - **Key pools**: each provider holds many upstream keys with admin-set `tokenLimit`/`requestLimit` caps, `priority` ordering, and monthly `resetInDays` rollover. Secrets are AES-GCM encrypted (Secrets Store `AES_ENCRYPTION_KEY_SECRET`) and never returned by the API (hint only).

@@ -65,7 +65,7 @@ jobs:
         uses: ./.github/actions/setup-env
 
       - name: Build Web App
-        run: pnpm --filter @edge-git/web build
+        run: pnpm --filter @agent-router/web build
 
   dependabot-auto-merge:
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.state == 'open' && !github.event.repository.fork }}

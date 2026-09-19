@@ -13,8 +13,8 @@ const backendServicesSrcPath = fileURLToPath(new URL('../../packages/backend-ser
 const sharedSrcPath = fileURLToPath(new URL('../../packages/shared/src', import.meta.url));
 
 const migrationsDir = resolve(fileURLToPath(new URL('../../migrations', import.meta.url)));
-// Top-level migration files only: migrations/_archive_edge_git/ holds the
-// pre-rewrite Edge-Git schema and must never be applied to the test database.
+// Top-level migration files only: migrations/_archive/ holds the
+// pre-rewrite legacy schema and must never be applied to the test database.
 const migrationFiles = readdirSync(migrationsDir)
   .filter((f) => f.endsWith('.sql'))
   .sort();

@@ -109,7 +109,7 @@ async function proxyOpenAI(c: ProxyContext, upstreamPath: string): Promise<Respo
   // Codex OAuth (ChatGPT subscription) tokens are honored by the Codex
   // backend, which serves the Responses API — not platform chat/embeddings.
   // Fail fast with guidance instead of 429ing upstream and cooling the key.
-  if (provider.kind === 'OPENAI_CODEX' && upstreamPath !== '/responses') {
+  if (upstreamPath !== '/responses' && provider.kind === 'OPENAI_CODEX') {
     return Response.json(
       {
         error: {

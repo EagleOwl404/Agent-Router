@@ -93,7 +93,7 @@ class CodexOAuthService {
       deviceSessionDAO: () => Promise.resolve(new CodexDeviceSessionDAO(env.DB)),
       masterKey,
       config,
-      fetchImpl: deps.fetchImpl ?? fetch,
+      fetchImpl: deps.fetchImpl ?? globalThis.fetch.bind(globalThis),
       ...deps,
     };
   }

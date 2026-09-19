@@ -46,7 +46,7 @@ class CodexTokenService {
       providerKeyDAO: () => Promise.resolve(new ProviderKeyDAO(env.DB)),
       masterKey,
       config,
-      fetchImpl: deps.fetchImpl ?? fetch,
+      fetchImpl: deps.fetchImpl ?? globalThis.fetch.bind(globalThis),
       ...deps,
     };
   }

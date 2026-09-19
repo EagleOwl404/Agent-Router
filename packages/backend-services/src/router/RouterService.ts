@@ -87,7 +87,7 @@ class RouterService {
       usageDAO: () => Promise.resolve(new UsageLedgerDAO(env.DB)),
       masterKey,
       config,
-      fetchImpl: deps.fetchImpl ?? fetch,
+      fetchImpl: deps.fetchImpl ?? globalThis.fetch.bind(globalThis),
       codexTokens: deps.codexTokens,
       ...deps,
     };

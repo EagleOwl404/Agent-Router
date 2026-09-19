@@ -88,6 +88,8 @@ describe('RouterService Codex OAuth', () => {
     expect(call.url).toBe('https://chatgpt.com/backend-api/codex/responses');
     expect(call.headers.authorization).toBe('Bearer at-1');
     expect(call.headers['ChatGPT-Account-Id']).toBe('acc-1');
+    expect(call.headers['OpenAI-Beta']).toBe('responses=experimental');
+    expect(call.headers['originator']).toBe('codex_cli_rs');
     const anon = buildCodexCall(null, '/responses', 'at-1', null, {});
     expect(anon.headers['ChatGPT-Account-Id']).toBeUndefined();
   });
@@ -111,6 +113,8 @@ describe('RouterService Codex OAuth', () => {
     expect(result.providerKeyId).toBe('k1');
     expect(seen[0].authorization).toBe('Bearer at-live');
     expect(seen[0]['ChatGPT-Account-Id']).toBe('acc-1');
+    expect(seen[0]['OpenAI-Beta']).toBe('responses=experimental');
+    expect(seen[0]['originator']).toBe('codex_cli_rs');
     expect(events).toContain('success:k1');
   });
 

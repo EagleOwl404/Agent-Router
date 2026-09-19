@@ -88,7 +88,7 @@ interface CodexTokenResponse {
   error_description?: string;
 }
 
-async function postTokenRequest(values: Record<string, string>, fetchImpl: typeof fetch = fetch): Promise<CodexTokenResponse> {
+async function postTokenRequest(values: Record<string, string>, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<CodexTokenResponse> {
   let response: Response;
   try {
     response = await fetchImpl(CODEX_TOKEN_URL, {
@@ -127,7 +127,7 @@ function toTokenResult(data: CodexTokenResponse): CodexTokenResult {
 
 async function exchangeCode(
   input: { code: string; codeVerifier: string; redirectUri: string },
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
 ): Promise<CodexTokenResult> {
   const data = await postTokenRequest(
     {
@@ -145,7 +145,7 @@ async function exchangeCode(
   return toTokenResult(data);
 }
 
-async function refreshAccessToken(input: { refreshToken: string }, fetchImpl: typeof fetch = fetch): Promise<CodexTokenResult> {
+async function refreshAccessToken(input: { refreshToken: string }, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<CodexTokenResult> {
   const data = await postTokenRequest(
     {
       grant_type: 'refresh_token',
@@ -162,7 +162,7 @@ async function refreshAccessToken(input: { refreshToken: string }, fetchImpl: ty
   return toTokenResult(data);
 }
 
-async function revokeRefreshToken(input: { refreshToken: string }, fetchImpl: typeof fetch = fetch): Promise<void> {
+async function revokeRefreshToken(input: { refreshToken: string }, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<void> {
   try {
     await fetchImpl(CODEX_REVOKE_URL, {
       method: 'POST',
@@ -200,7 +200,7 @@ function normalizeExpiryMs(raw: string | undefined): number {
   return Number.isFinite(parsed) ? parsed : Date.now() + CODEX_DEVICE_CODE_TTL_MS;
 }
 
-async function requestDeviceCode(fetchImpl: typeof fetch = fetch): Promise<CodexDeviceCode> {
+async function requestDeviceCode(fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<CodexDeviceCode> {
   let response: Response;
   try {
     response = await fetchImpl(CODEX_DEVICE_USERCODE_URL, {
@@ -234,7 +234,7 @@ async function requestDeviceCode(fetchImpl: typeof fetch = fetch): Promise<Codex
 
 async function pollDeviceCode(
   input: { deviceAuthId: string; userCode: string },
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
 ): Promise<CodexDevicePoll> {
   let response: Response;
   try {
